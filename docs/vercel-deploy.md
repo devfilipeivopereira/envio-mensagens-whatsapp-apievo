@@ -2,21 +2,21 @@
 
 ## Objetivo
 
-Este guia descreve o checklist completo para publicar o painel no Vercel com estabilidade para campanhas, cron e integra??o com Supabase e Evolution API.
+Este guia descreve o checklist completo para publicar o painel no Vercel com estabilidade para campanhas, fila persistida, integração com Supabase e Evolution API.
 
-## 1. Pr?-requisitos
+## 1. Pré-requisitos
 
-Voc? precisa ter:
+Você precisa ter:
 
-- reposit?rio importado no Vercel
+- repositório importado no Vercel
 - acesso ao projeto Supabase
-- acesso ao dom?nio ou endpoint da Evolution API
+- acesso ao domínio ou endpoint da Evolution API
 - um `CRON_SECRET` configurado
-- um banco Postgres acess?vel a partir do ambiente serverless
+- um banco Postgres acessível a partir do ambiente serverless
 
-## 2. Vari?veis de ambiente
+## 2. Variáveis de ambiente
 
-Cadastre no Vercel as mesmas vari?veis usadas localmente. Priorize estas:
+Cadastre no Vercel as mesmas variáveis usadas localmente. Priorize estas:
 
 - `NEXT_PUBLIC_SUPABASE_URL`
 - `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
@@ -32,43 +32,75 @@ Cadastre no Vercel as mesmas vari?veis usadas localmente. Priorize estas:
 
 ## 3. Banco de dados
 
-O app usa Postgres diretamente por `pg`. Em Vercel, prefira um endere?o com pooler se o host direto n?o responder bem. A aplica??o faz fallback autom?tico:
+O app usa Postgres diretamente por `pg`. Em Vercel, prefira um endereço com pooler se o host direto não responder bem. A aplicação faz fallback automático:
 
 1. usa `SUPABASE_DB_POOLER_URL` quando existir
-2. usa `SUPABASE_DB_URL` quando o pooler n?o estiver definido
+2. usa `SUPABASE_DB_URL` quando o pooler não estiver definido
 
-## 4. Cron e fila
+## 4. Fila e processamento
 
 A fila de disparos fica persistida no banco. Isso significa:
 
-- n?o depende de mem?ria da inst?ncia serverless
-- suporta retomada ap?s timeout ou novo deploy
-- mant?m pausa m?nima de 10 segundos entre mensagens
+- não depende de memória da instância serverless
+- suporta retomada após timeout ou novo deploy
+- mantém pausa mínima de 10 segundos entre mensagens
 
-A rota usada pelo cron ?:
+No seu cenário, a melhor opção é rodar o worker na VPS.
+
+Worker recomendado:
+
+```bash
+npm run worker:dispatch
+```
+
+A rota HTTP de processamento continua disponível como alternativa:
 
 - `/api/cron/process-dispatches`
 
-O `vercel.json` agenda essa rota a cada minuto.
+Ela aceita autenticação por:
 
-## 5. Healthcheck
+- `Authorization: Bearer <CRON_SECRET>`
+- `x-cron-secret: <CRON_SECRET>`
+- `?secret=<CRON_SECRET>`
 
-Use `/api/health` ap?s cada deploy para validar:
+## 5. Plano Hobby no Vercel
 
-- se as chaves do Supabase est?o presentes
-- se a configura??o padr?o da Evolution existe
+No plano Hobby, o Vercel não permite cron por minuto no `vercel.json`. Por isso, este projeto foi ajustado para deploy sem `crons` nativos do Vercel.
+
+Se você estiver no Hobby, use preferencialmente a VPS para rodar o worker por cron Linux em intervalos de 1 minuto.
+
+Cron recomendado na VPS:
+
+```bash
+* * * * * cd /opt/envio-mensagens-whatsapp-apievo && /usr/bin/npm run worker:dispatch >> /var/log/whatsapp-dispatch-worker.log 2>&1
+```
+
+Se quiser usar HTTP em vez de worker local, use um scheduler externo para chamar a rota de processamento.
+
+Exemplo:
+
+```text
+https://seu-dominio.com/api/cron/process-dispatches?secret=SEU_CRON_SECRET
+```
+
+## 6. Healthcheck
+
+Use `/api/health` após cada deploy para validar:
+
+- se as chaves do Supabase estão presentes
+- se a configuração padrão da Evolution existe
 - se o `CRON_SECRET` foi configurado
 - se o banco responde
 
-## 6. Checklist p?s-deploy
+## 7. Checklist pós-deploy
 
 - login funcionando
-- inst?ncia padr?o carregada
-- `/api/health` retornando `ok` ou `degraded` com diagn?stico claro
-- cria??o de listas funcionando
+- instância padrão carregada
+- `/api/health` retornando `ok` ou `degraded` com diagnóstico claro
+- criação de listas funcionando
 - agendamento de campanha funcionando
-- cron processando a fila
+- scheduler externo ou Vercel Pro acionando a fila
 
-## 7. Riscos conhecidos
+## 8. Riscos conhecidos
 
-Se o host Postgres direto n?o aceitar conex?es vindas do Vercel, o app pode autenticar normalmente no Supabase mas falhar nas fun??es de banco. Nesse caso, configure `SUPABASE_DB_POOLER_URL` com um endpoint externo apropriado.
+Se o host Postgres direto não aceitar conexões vindas do Vercel, o app pode autenticar normalmente no Supabase mas falhar nas funções de banco. Nesse caso, configure `SUPABASE_DB_POOLER_URL` com um endpoint externo apropriado.
