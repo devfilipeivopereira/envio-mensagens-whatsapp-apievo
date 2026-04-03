@@ -1170,7 +1170,7 @@ export function OperationsConsole() {
             <p className="brand-subtitle">UI operacional com Supabase, Explorer e cron Vercel.</p>
           </div>
         </div>
-        <div className="card">
+        <div className="card sidebar-card">
           <Field label="Instância ativa">
             <select value={activeInstanceId} onChange={(event) => setActiveInstanceId(event.target.value)}>
               {instances.map((instance) => (
@@ -1185,20 +1185,13 @@ export function OperationsConsole() {
             <span className="badge">{session.user.email}</span>
           </div>
         </div>
-        <nav className="nav">
-          {NAV_ITEMS.map((item, index) => (
-            <button
-              key={item.key}
-              className={`nav-button ${activeSection === item.key ? "is-active" : ""}`}
-              onClick={() => setActiveSection(item.key)}
-              type="button"
-            >
-              <span className="nav-index">{String(index + 1).padStart(2, "0")}</span>
-              <span>{item.label}</span>
-            </button>
-          ))}
-        </nav>
-        <button className="button-ghost" type="button" onClick={handleLogout}>
+        <div className="sidebar-note">
+          <p className="helper-kicker">Layout compacto</p>
+          <p className="section-copy">
+            NavegaÃ§Ã£o principal no topo para caber melhor em notebook e navegador no zoom normal.
+          </p>
+        </div>
+        <button className="button-ghost sidebar-logout" type="button" onClick={handleLogout}>
           Sair
         </button>
       </aside>
@@ -1209,6 +1202,38 @@ export function OperationsConsole() {
             <span>{notice.text}</span>
           </div>
         ) : null}
+
+        <section className="workspace-header">
+          <div>
+            <p className="helper-kicker">Painel operacional</p>
+            <h2 className="workspace-title">Tudo visÃ­vel sem depender de zoom.</h2>
+            <p className="section-copy">
+              Menu reposicionado, topo mais enxuto e Ã¡reas distribuÃ­das para uso confortÃ¡vel no navegador.
+            </p>
+          </div>
+          <div className="workspace-header-badges">
+            <span className="badge is-good">NavegaÃ§Ã£o compacta</span>
+            {activeInstance ? (
+              <span className="badge">{activeInstance.instanceName}</span>
+            ) : (
+              <span className="badge">Sem instÃ¢ncia ativa</span>
+            )}
+          </div>
+        </section>
+
+        <nav className="workspace-nav" aria-label="SeÃ§Ãµes do painel">
+          {NAV_ITEMS.map((item, index) => (
+            <button
+              key={item.key}
+              className={`workspace-nav-button ${activeSection === item.key ? "is-active" : ""}`}
+              onClick={() => setActiveSection(item.key)}
+              type="button"
+            >
+              <span className="nav-index">{String(index + 1).padStart(2, "0")}</span>
+              <span>{item.label}</span>
+            </button>
+          ))}
+        </nav>
 
         <section className="hero">
           <div className="hero-top">
