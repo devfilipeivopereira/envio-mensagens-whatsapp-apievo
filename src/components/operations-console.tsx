@@ -22,6 +22,7 @@ import type {
 
 type SectionKey =
   | "overview"
+  | "direct"
   | "messages"
   | "campaigns"
   | "groups"
@@ -103,7 +104,8 @@ interface StatusDraft {
 
 const NAV_ITEMS: Array<{ key: SectionKey; label: string }> = [
   { key: "overview", label: "Painel" },
-  { key: "messages", label: "Mensagens" },
+  { key: "direct", label: "Envio rapido" },
+  { key: "messages", label: "Conversas" },
   { key: "campaigns", label: "Campanhas" },
   { key: "groups", label: "Grupos" },
   { key: "contacts", label: "Contatos" },
@@ -251,6 +253,82 @@ function parseRecipientLines(value: string) {
     });
 
   return recipients;
+}
+
+function buildRecipientLine(label: string, target: string) {
+  const cleanTarget = target.trim();
+  const cleanLabel = label.trim();
+
+  if (!cleanLabel || cleanLabel === cleanTarget) {
+    return cleanTarget;
+  }
+
+  return `${cleanLabel}|${cleanTarget}`;
+}
+
+function parseDirectRecipientsInput(value: string) {
+  const recipients: DispatchRecipient[] = [];
+  const seenTargets = new Set<string>();
+
+  value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .forEach((line) => {
+      const fragments = line.includes("|")
+        ? [line]
+        : line
+            .split(/[;,]+/)
+            .map((item) => item.trim())
+            .filter(Boolean);
+
+      fragments.forEach((fragment) => {
+        const separatorIndex = fragment.indexOf("|");
+        const label =
+          separatorIndex >= 0
+            ? fragment.slice(0, separatorIndex).trim()
+            : fragment.trim();
+        const target =
+          separatorIndex >= 0
+            ? fragment.slice(separatorIndex + 1).trim()
+            : fragment.trim();
+
+        if (!target) {
+          return;
+        }
+
+        const targetKey = target.toLowerCase();
+
+        if (seenTargets.has(targetKey)) {
+          return;
+        }
+
+        seenTargets.add(targetKey);
+        recipients.push({
+          id: crypto.randomUUID(),
+          label: label || target,
+          target,
+          kind: "manual",
+          source: "envio-rapido",
+        });
+      });
+    });
+
+  return recipients;
+}
+
+function resolveDirectScheduleValue(baseValue: string, index: number, totalRecipients: number) {
+  if (!baseValue && totalRecipients === 1 && index === 0) {
+    return null;
+  }
+
+  const baseDate = baseValue ? new Date(baseValue) : new Date();
+
+  if (Number.isNaN(baseDate.getTime())) {
+    return baseValue || null;
+  }
+
+  return new Date(baseDate.getTime() + index * 10_000).toISOString();
 }
 
 function parseContactCards(value: string) {
@@ -480,6 +558,7 @@ export function OperationsConsole() {
   const [directLabel, setDirectLabel] = useState("");
   const [directJobName, setDirectJobName] = useState("");
   const [directScheduleAt, setDirectScheduleAt] = useState("");
+  const [directSubmitting, setDirectSubmitting] = useState(false);
   const [directMessageDraft, setDirectMessageDraft] = useState(createMessageDraft());
   const [campaignName, setCampaignName] = useState("Campanha com fila protegida");
   const [campaignScheduleAt, setCampaignScheduleAt] = useState("");
@@ -749,6 +828,46 @@ export function OperationsConsole() {
     setDirectLabel(chat.pushName ?? chat.remoteJid);
   }
 
+  function openDirectComposer(target: string, label: string, mode: "replace" | "append" = "replace") {
+    const nextLine = buildRecipientLine(label, target);
+
+    setDirectTarget((current) => {
+      const trimmedCurrent = current.trim();
+
+      if (mode === "append" && trimmedCurrent) {
+        return `${trimmedCurrent}\n${nextLine}`;
+      }
+
+      return nextLine;
+    });
+    setDirectLabel(label);
+    setActiveSection("direct");
+  }
+
+  function appendBroadcastListToDirectComposer(list: BroadcastListRecord) {
+    const nextLines = list.recipients
+      .map((recipient) => buildRecipientLine(recipient.label, recipient.target))
+      .join("\n");
+
+    setDirectTarget((current) => {
+      const trimmedCurrent = current.trim();
+      return trimmedCurrent ? `${trimmedCurrent}\n${nextLines}` : nextLines;
+    });
+    setNotice({
+      tone: "info",
+      text: `Lista ${list.name} adicionada ao envio rapido.`,
+    });
+    setActiveSection("direct");
+  }
+
+  function clearDirectComposer() {
+    setDirectTarget("");
+    setDirectLabel("");
+    setDirectJobName("");
+    setDirectScheduleAt("");
+    setDirectMessageDraft(createMessageDraft());
+  }
+
   function useMessageAsQuote(message: SimplifiedMessage) {
     setDirectMessageDraft((current) => ({
       ...current,
@@ -761,7 +880,7 @@ export function OperationsConsole() {
         conversation: message.preview,
       },
     }));
-    setActiveSection("messages");
+    openDirectComposer(message.key.remoteJid, message.pushName ?? message.key.remoteJid);
   }
 
   function assignCustomContact(contact: CustomContact) {
@@ -774,8 +893,6 @@ export function OperationsConsole() {
       notes: contact.notes ?? "",
       tags: contact.tags.join(", "),
     });
-    setDirectTarget(contact.phoneNumber);
-    setDirectLabel(contact.fullName);
   }
 
   function assignBroadcastList(list: BroadcastListRecord) {
@@ -876,6 +993,73 @@ export function OperationsConsole() {
       text: `Job ${result.job.id} criado com sucesso.`,
     });
     await loadDispatchJobs(activeInstanceId);
+  }
+
+  async function handleQueueDirectBatch() {
+    const parsedRecipients = parseDirectRecipientsInput(directTarget);
+    const recipients = parsedRecipients.map((recipient) => ({
+      ...recipient,
+      label:
+        directLabel.trim() && parsedRecipients.length === 1 && recipient.label === recipient.target
+          ? directLabel.trim()
+          : recipient.label,
+    }));
+
+    if (!activeInstanceId || recipients.length === 0) {
+      setNotice({
+        tone: "error",
+        text: "Escolha uma instancia e informe ao menos um destino valido.",
+      });
+      return;
+    }
+
+    try {
+      setDirectSubmitting(true);
+
+      const jobs: DispatchJob[] = [];
+
+      for (const [index, recipient] of recipients.entries()) {
+        const result = await runAction("queue-message", {
+          instanceId: activeInstanceId,
+          target: recipient.target,
+          label: recipient.label,
+          name:
+            directJobName.trim()
+              ? recipients.length === 1
+                ? directJobName.trim()
+                : `${directJobName.trim()} ${String(index + 1).padStart(2, "0")}`
+              : `Envio para ${recipient.label || recipient.target}`,
+          scheduledFor: resolveDirectScheduleValue(
+            directScheduleAt,
+            index,
+            recipients.length,
+          ),
+          message: buildMessagePayload(directMessageDraft),
+        });
+
+        jobs.push(result.job as DispatchJob);
+      }
+
+      setNotice({
+        tone: "success",
+        text:
+          recipients.length === 1
+            ? `Job ${jobs[0]?.id ?? ""} criado com sucesso.`
+            : `${jobs.length} envios unitarios foram enfileirados com pausa de 10 segundos entre eles.`,
+      });
+      setDirectMessageDraft((current) => ({
+        ...current,
+        quoted: null,
+      }));
+      await loadDispatchJobs(activeInstanceId);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: formatAppError(error),
+      });
+    } finally {
+      setDirectSubmitting(false);
+    }
   }
 
   async function handleCreateCampaign() {
@@ -1102,6 +1286,12 @@ export function OperationsConsole() {
 
   const activeInstance = instances.find((instance) => instance.id === activeInstanceId) ?? null;
   const activeSummary = activeInstance?.summary ?? null;
+  const directRecipients = parseDirectRecipientsInput(directTarget);
+  const quickChats = chats.slice(0, 6);
+  const quickContacts = syncedContacts.filter((contact) => !contact.isGroup).slice(0, 6);
+  const quickCustomContacts = customContacts.slice(0, 6);
+  const quickBroadcastLists = broadcastLists.slice(0, 4);
+  const directJobs = dispatchJobs.filter((job) => job.totalRecipients === 1).slice(0, 8);
 
   if (authLoading) {
     return <div className="empty-state">Inicializando sistema...</div>;
@@ -1308,8 +1498,227 @@ export function OperationsConsole() {
           </div>
         ) : null}
 
+        {activeSection === "direct" ? (
+          <div className="direct-layout">
+            <section className="panel direct-composer-panel stack">
+              <div className="panel-head">
+                <div>
+                  <p className="helper-kicker">Envio sem campanha</p>
+                  <h3 className="panel-title">Monte mensagens unitarias em um lugar proprio.</h3>
+                  <p className="section-copy">
+                    Cole um numero, um JID ou varias linhas e o sistema cria envios separados, sem virar campanha.
+                  </p>
+                </div>
+                <div className="badge-row">
+                  <span className="badge is-good">
+                    {directRecipients.length} destino{directRecipients.length === 1 ? "" : "s"}
+                  </span>
+                  <span className="badge">Tipo {directMessageDraft.type}</span>
+                </div>
+              </div>
+
+              {directMessageDraft.quoted ? (
+                <div className="quote-card">
+                  <div>
+                    <strong>Citando mensagem</strong>
+                    <p className="section-copy">{directMessageDraft.quoted.conversation}</p>
+                  </div>
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    onClick={() =>
+                      setDirectMessageDraft((current) => ({
+                        ...current,
+                        quoted: null,
+                      }))
+                    }
+                  >
+                    Remover citacao
+                  </button>
+                </div>
+              ) : null}
+
+              <Field label="Destinos">
+                <textarea
+                  placeholder={"5511999999999\nJoao|551188887777\ngrupo@broadcast"}
+                  value={directTarget}
+                  onChange={(event) => setDirectTarget(event.target.value)}
+                />
+              </Field>
+              <p className="field-help">
+                Use uma linha por destino. Se houver mais de um destino, cada envio vira um job proprio com intervalo minimo de 10 segundos.
+              </p>
+              <div className="field-grid">
+                <Field label="Rotulo padrao">
+                  <input value={directLabel} onChange={(event) => setDirectLabel(event.target.value)} />
+                </Field>
+                <Field label="Nome da fila">
+                  <input value={directJobName} onChange={(event) => setDirectJobName(event.target.value)} />
+                </Field>
+              </div>
+              <Field label="Agendar a partir de (opcional)">
+                <input type="datetime-local" value={directScheduleAt} onChange={(event) => setDirectScheduleAt(event.target.value)} />
+              </Field>
+              <MessageBuilder draft={directMessageDraft} setDraft={setDirectMessageDraft} />
+              <div className="actions-row">
+                <button
+                  className="button"
+                  disabled={directSubmitting || !activeInstanceId || directRecipients.length === 0}
+                  type="button"
+                  onClick={handleQueueDirectBatch}
+                >
+                  {directSubmitting
+                    ? "Enfileirando..."
+                    : directRecipients.length > 1
+                      ? `Enfileirar ${directRecipients.length} envios`
+                      : "Enfileirar envio"}
+                </button>
+                <button className="button-ghost" type="button" onClick={clearDirectComposer}>
+                  Limpar composicao
+                </button>
+              </div>
+            </section>
+
+            <div className="direct-side-stack">
+              <section className="panel stack">
+                <div className="panel-head">
+                  <div>
+                    <p className="helper-kicker">Atalhos</p>
+                    <h3 className="panel-title">Puxe destinos sem sair do fluxo.</h3>
+                  </div>
+                </div>
+
+                <div className="shortcut-stack">
+                  <div className="shortcut-block">
+                    <div className="list-item-title-row">
+                      <strong>Conversas recentes</strong>
+                      <span className="muted">{quickChats.length} atalhos</span>
+                    </div>
+                    <div className="recipient-chip-grid">
+                      {quickChats.map((chat) => (
+                        <button
+                          className="recipient-chip"
+                          key={chat.remoteJid}
+                          type="button"
+                          onClick={() => openDirectComposer(chat.remoteJid, chat.pushName ?? chat.remoteJid, "append")}
+                        >
+                          <strong>{chat.pushName ?? chat.remoteJid}</strong>
+                          <span>{chat.remoteJid}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="shortcut-block">
+                    <div className="list-item-title-row">
+                      <strong>Contatos sincronizados</strong>
+                      <span className="muted">{quickContacts.length} contatos</span>
+                    </div>
+                    <div className="recipient-chip-grid">
+                      {quickContacts.map((contact) => (
+                        <button
+                          className="recipient-chip"
+                          key={contact.id}
+                          type="button"
+                          onClick={() => openDirectComposer(contact.remoteJid, contact.pushName ?? contact.remoteJid, "append")}
+                        >
+                          <strong>{contact.pushName ?? contact.remoteJid}</strong>
+                          <span>{contact.remoteJid}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="shortcut-block">
+                    <div className="list-item-title-row">
+                      <strong>Contatos locais</strong>
+                      <span className="muted">{quickCustomContacts.length} salvos</span>
+                    </div>
+                    <div className="recipient-chip-grid">
+                      {quickCustomContacts.map((contact) => (
+                        <button
+                          className="recipient-chip"
+                          key={contact.id}
+                          type="button"
+                          onClick={() => openDirectComposer(contact.phoneNumber, contact.fullName, "append")}
+                        >
+                          <strong>{contact.fullName}</strong>
+                          <span>{contact.phoneNumber}</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  <div className="shortcut-block">
+                    <div className="list-item-title-row">
+                      <strong>Listas salvas</strong>
+                      <span className="muted">{quickBroadcastLists.length} listas</span>
+                    </div>
+                    <div className="recipient-chip-grid">
+                      {quickBroadcastLists.map((list) => (
+                        <button
+                          className="recipient-chip"
+                          key={list.id}
+                          type="button"
+                          onClick={() => appendBroadcastListToDirectComposer(list)}
+                        >
+                          <strong>{list.name}</strong>
+                          <span>{list.recipients.length} destinos</span>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section className="panel stack">
+                <div className="panel-head">
+                  <div>
+                    <p className="helper-kicker">Fila unitaria</p>
+                    <h3 className="panel-title">Acompanhe envios fora do modo campanha.</h3>
+                  </div>
+                </div>
+
+                {directJobs.length > 0 ? (
+                  <div className="stack">
+                    {directJobs.map((job) => (
+                      <div className="card compact-job-card" key={job.id}>
+                        <div className="card-head">
+                          <div>
+                            <h4 className="panel-title">{job.name}</h4>
+                            <p className="section-copy">
+                              {job.recipients[0]?.label ?? job.recipients[0]?.target ?? "Destino nao identificado"}
+                            </p>
+                          </div>
+                          <span
+                            className={`badge ${
+                              job.status === "completed"
+                                ? "is-good"
+                                : job.status === "failed"
+                                  ? "is-danger"
+                                  : "is-warn"
+                            }`}
+                          >
+                            {job.status}
+                          </span>
+                        </div>
+                        <div className="badge-row">
+                          <span className="badge">Agenda {formatDateTime(job.scheduledFor)}</span>
+                          <span className="badge">Throttle {Math.round(job.throttleMs / 1000)}s</span>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <div className="empty-state">Nenhum envio unitario foi criado ainda.</div>
+                )}
+              </section>
+            </div>
+          </div>
+        ) : null}
+
         {activeSection === "messages" ? (
-          <div className="three-grid">
+          <div className="conversation-layout">
             <section className="panel">
               <Field label="Buscar conversa">
                 <input value={chatSearch} onChange={(event) => setChatSearch(event.target.value)} />
@@ -1324,7 +1733,27 @@ export function OperationsConsole() {
                 ))}
               </div>
             </section>
-            <section className="panel">
+            <section className="panel stack">
+              <div className="panel-head">
+                <div>
+                  <p className="helper-kicker">Conversa ativa</p>
+                  <h3 className="panel-title">{selectedChatJid || "Selecione uma conversa"}</h3>
+                </div>
+                {selectedChatJid ? (
+                  <button
+                    className="button-ghost"
+                    type="button"
+                    onClick={() =>
+                      openDirectComposer(
+                        selectedChatJid,
+                        chats.find((chat) => chat.remoteJid === selectedChatJid)?.pushName ?? selectedChatJid,
+                      )
+                    }
+                  >
+                    Abrir no envio rapido
+                  </button>
+                ) : null}
+              </div>
               <div className="scroll-list thread">
                 {messages.map((message) => (
                   <button
@@ -1515,7 +1944,7 @@ export function OperationsConsole() {
               </Field>
               <div className="scroll-list stack" style={{ marginTop: 16 }}>
                 {filteredContacts.slice(0, 200).map((contact) => (
-                  <button className="list-item" key={contact.id} onClick={() => { setDirectTarget(contact.remoteJid); setDirectLabel(contact.pushName ?? contact.remoteJid); }} type="button">
+                  <button className="list-item" key={contact.id} onClick={() => openDirectComposer(contact.remoteJid, contact.pushName ?? contact.remoteJid)} type="button">
                     <strong>{contact.pushName ?? contact.remoteJid}</strong>
                     <span className="muted">{contact.remoteJid}</span>
                   </button>
@@ -1536,6 +1965,9 @@ export function OperationsConsole() {
                     <strong>{contact.fullName}</strong>
                     <p className="section-copy">{contact.phoneNumber}</p>
                     <div className="actions-row">
+                      <button className="button-ghost" type="button" onClick={() => openDirectComposer(contact.phoneNumber, contact.fullName)}>
+                        Enviar sem campanha
+                      </button>
                       <button className="button-ghost" type="button" onClick={() => assignCustomContact(contact)}>Editar</button>
                     </div>
                   </div>
@@ -1572,6 +2004,7 @@ export function OperationsConsole() {
                     <p className="section-copy">{list.description ?? "Sem descrição"}</p>
                     <div className="badge-row"><span className="badge">{list.recipients.length} destinos</span></div>
                     <div className="actions-row" style={{ marginTop: 12 }}>
+                      <button className="button-ghost" type="button" onClick={() => appendBroadcastListToDirectComposer(list)}>Usar no envio rapido</button>
                       <button className="button-ghost" type="button" onClick={() => assignBroadcastList(list)}>Editar</button>
                     </div>
                   </div>
