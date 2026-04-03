@@ -81,13 +81,14 @@ button {
   display: flex;
   flex-direction: column;
   gap: 16px;
-  height: calc(100vh - 32px);
+  height: auto;
+  max-height: calc(100vh - 32px);
   padding: 20px 16px;
   background: linear-gradient(180deg, rgba(4, 12, 18, 0.96), rgba(7, 17, 23, 0.86));
   border: 1px solid var(--line);
   border-radius: 30px;
   backdrop-filter: blur(22px);
-  overflow: auto;
+  overflow: visible;
 }
 
 .brand-block {
@@ -159,20 +160,10 @@ button {
   top: 12px;
   z-index: 5;
   display: flex;
+  flex-wrap: wrap;
   gap: 10px;
   margin: 0 0 16px;
-  padding: 6px 2px 10px;
-  overflow-x: auto;
-  scrollbar-width: thin;
-}
-
-.workspace-nav::-webkit-scrollbar {
-  height: 6px;
-}
-
-.workspace-nav::-webkit-scrollbar-thumb {
-  background: rgba(156, 181, 190, 0.22);
-  border-radius: 999px;
+  padding: 4px 0 10px;
 }
 
 .workspace-nav-button {
@@ -437,17 +428,8 @@ button {
 }
 
 .scroll-list {
-  max-height: min(62vh, 680px);
-  overflow: auto;
-}
-
-.scroll-list::-webkit-scrollbar {
-  width: 8px;
-}
-
-.scroll-list::-webkit-scrollbar-thumb {
-  background: rgba(156, 181, 190, 0.22);
-  border-radius: 999px;
+  max-height: none;
+  overflow: visible;
 }
 
 .list-item {
@@ -833,7 +815,8 @@ button {
   }
 
   .workspace-nav {
-    top: 8px;
+    position: static;
+    top: auto;
   }
 }
 
