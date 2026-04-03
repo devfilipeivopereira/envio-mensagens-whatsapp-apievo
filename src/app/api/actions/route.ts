@@ -30,6 +30,7 @@ import {
   deleteBroadcastList,
   deleteCustomContact,
   ensureDefaultInstanceFromEnv,
+  getInstanceByName,
   getInstanceById,
   saveBroadcastList,
   saveCustomContact,
@@ -82,8 +83,12 @@ export async function POST(request: NextRequest) {
           notes: String(payload.notes ?? "").trim(),
         };
 
-        const instance = instanceId
-          ? await updateManagedInstance(instanceId, {
+        const existingByName =
+          !instanceId ? await getInstanceByName(instanceName) : null;
+        const targetInstanceId = instanceId || existingByName?.id || "";
+
+        const instance = targetInstanceId
+          ? await updateManagedInstance(targetInstanceId, {
               instanceName,
               apiToken,
               baseUrl,

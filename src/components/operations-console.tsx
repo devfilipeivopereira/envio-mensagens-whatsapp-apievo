@@ -48,6 +48,15 @@ interface NoticeState {
   text: string;
 }
 
+interface InstanceFormPayload {
+  instanceId?: string;
+  instanceName: string;
+  apiToken: string;
+  baseUrl: string;
+  label: string;
+  notes: string;
+}
+
 interface MessageDraft {
   type: DispatchMessageType;
   text: string;
@@ -398,12 +407,16 @@ function replacePresetInstanceName(path: string, instanceName: string) {
   return path.replaceAll("{instanceName}", instanceName);
 }
 
+function normalizeMessageForSearch(value: string) {
+  return value.normalize("NFD").replace(/\p{Diacritic}/gu, "").toLowerCase();
+}
+
 function formatAuthError(error: unknown) {
   if (!(error instanceof Error)) {
     return "Falha no login.";
   }
 
-  const message = error.message.toLowerCase();
+  const message = normalizeMessageForSearch(error.message);
 
   if (message.includes("invalid login credentials")) {
     return "Login ou senha inválidos.";
@@ -411,6 +424,28 @@ function formatAuthError(error: unknown) {
 
   if (message.includes("email not confirmed")) {
     return "O email ainda não foi confirmado.";
+  }
+
+  return error.message;
+}
+
+function formatAppError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "Falha ao processar a solicitação.";
+  }
+
+  const message = normalizeMessageForSearch(error.message);
+
+  if (message.includes("não foi encontrada") || message.includes("nao foi encontrada")) {
+    return "A instância não foi encontrada nesse token. Confira o nome exato cadastrado na Evolution.";
+  }
+
+  if (message.includes("duplicate key") || message.includes("unique constraint")) {
+    return "Já existe uma instância com esse nome. Edite a existente ou use outro nome.";
+  }
+
+  if (message.includes("failed to fetch") || message.includes("network")) {
+    return "Não foi possível conectar ao servidor. Tente novamente em alguns segundos.";
   }
 
   return error.message;
@@ -473,6 +508,14 @@ export function OperationsConsole() {
     name: "",
     description: "",
     recipientsText: "",
+  });
+  const [instanceDraft, setInstanceDraft] = useState<InstanceFormPayload>({
+    instanceId: "",
+    instanceName: "",
+    apiToken: "",
+    baseUrl: "",
+    label: "",
+    notes: "",
   });
   const [lookupNumber, setLookupNumber] = useState("");
   const [lookupResult, setLookupResult] = useState("");
@@ -607,7 +650,7 @@ export function OperationsConsole() {
     return data;
   }
 
-  async function runAction(action: string, payload: Record<string, unknown>) {
+  async function runAction(action: string, payload: unknown) {
     return authorizedFetch("/api/actions", {
       method: "POST",
       body: JSON.stringify({ action, payload }),
@@ -746,28 +789,60 @@ export function OperationsConsole() {
     });
   }
 
+  function assignInstanceForEditing(instance: ManagedInstanceView) {
+    setInstanceDraft({
+      instanceId: instance.id,
+      instanceName: instance.instanceName,
+      apiToken: instance.apiToken,
+      baseUrl: instance.baseUrl,
+      label: String(instance.profile.label ?? instance.instanceName),
+      notes: String(instance.profile.notes ?? ""),
+    });
+    setActiveSection("instances");
+  }
+
+  async function handleRegisterInstance(payload: InstanceFormPayload) {
+    const result = await runAction("register-instance", payload);
+    await loadInstances();
+    setActiveInstanceId(result.instance.id);
+    setInstanceDraft({
+      instanceId: "",
+      instanceName: "",
+      apiToken: "",
+      baseUrl: activeInstance?.baseUrl ?? payload.baseUrl,
+      label: "",
+      notes: "",
+    });
+    setNotice({
+      tone: "success",
+      text: payload.instanceId
+        ? "Instância atualizada com sucesso."
+        : "Instância validada e salva com sucesso.",
+    });
+  }
+
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-      try {
-        setAuthBusy(true);
-        const result = await supabase.auth.signInWithPassword({
-          email: loginEmail.trim(),
-          password: loginPassword,
-        });
+    try {
+      setAuthBusy(true);
+      const result = await supabase.auth.signInWithPassword({
+        email: loginEmail.trim(),
+        password: loginPassword,
+      });
 
       if (result.error) {
         throw result.error;
       }
 
       setNotice({ tone: "success", text: "Login realizado com sucesso." });
-      } catch (error) {
-        setNotice({
-          tone: "error",
-          text: formatAuthError(error),
-        });
-      } finally {
-        setAuthBusy(false);
+    } catch (error) {
+      setNotice({
+        tone: "error",
+        text: formatAuthError(error),
+      });
+    } finally {
+      setAuthBusy(false);
     }
   }
 
@@ -1173,13 +1248,38 @@ export function OperationsConsole() {
         </section>
 
         {activeSection === "overview" ? (
-          <div className="three-grid">
-            {CAPABILITIES.map((item) => (
-              <section className="panel" key={item.title}>
-                <h3 className="panel-title">{item.title}</h3>
-                <p className="section-copy">{item.description}</p>
-              </section>
-            ))}
+          <div className="overview-grid">
+            <section className="panel overview-feature stack">
+              <div className="panel-head">
+                <div>
+                  <p className="badge is-good">Sala de controle</p>
+                  <h3 className="panel-title">Operacao diaria, campanhas e Explorer no mesmo ritmo visual.</h3>
+                </div>
+                <span className="badge">{instances.length} instancias</span>
+              </div>
+              <p className="section-copy">
+                O painel agora prioriza leitura rapida, acoes mais claras e blocos com peso visual melhor distribuido
+                para desktop, notebook e mobile.
+              </p>
+              <div className="helper-grid">
+                <div className="helper-card">
+                  <strong>Fila protegida</strong>
+                  <p className="section-copy">Cada disparo respeita o intervalo minimo de 10 segundos entre mensagens.</p>
+                </div>
+                <div className="helper-card">
+                  <strong>Multi-instancia</strong>
+                  <p className="section-copy">Cada instancia usa perfil proprio e schema dedicado no Postgres.</p>
+                </div>
+              </div>
+            </section>
+            <div className="overview-side-stack">
+              {CAPABILITIES.map((item) => (
+                <section className="panel compact-panel" key={item.title}>
+                  <h3 className="panel-title">{item.title}</h3>
+                  <p className="section-copy">{item.description}</p>
+                </section>
+              ))}
+            </div>
           </div>
         ) : null}
 
@@ -1457,33 +1557,85 @@ export function OperationsConsole() {
         ) : null}
 
         {activeSection === "instances" ? (
-          <div className="two-grid">
-            <section className="panel">
-              <div className="scroll-list stack">
-                {instances.map((instance) => (
-                  <div className="card" key={instance.id}>
-                    <strong>{instance.instanceName}</strong>
-                    <p className="section-copy">{instance.baseUrl}</p>
-                    <div className="badge-row">
-                      <span className={`badge ${instance.summary?.connectionStatus === "open" ? "is-good" : "is-warn"}`}>{instance.summary?.connectionStatus ?? "sem status"}</span>
-                      <span className="badge">{instance.dbSchema}</span>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </section>
+          <div className="instance-layout">
             <section className="panel stack">
-              <p className="section-copy">Cadastre outra instância informando nome exato, token e base URL. O backend valida e cria um schema dedicado no banco.</p>
+              <div className="panel-head">
+                <div>
+                  <p className="helper-kicker">Instancias cadastradas</p>
+                  <h3 className="panel-title">Selecione, revise ou edite uma conexao Evolution.</h3>
+                </div>
+                <span className="badge">{instances.length} cadastradas</span>
+              </div>
+              {instances.length ? (
+                <div className="instance-cards">
+                  {instances.map((instance) => (
+                    <div className={`card instance-card ${activeInstanceId === instance.id ? "is-active" : ""}`} key={instance.id}>
+                      <div className="panel-head">
+                        <div>
+                          <strong>{instance.profile.label ? String(instance.profile.label) : instance.instanceName}</strong>
+                          <p className="section-copy">{instance.instanceName}</p>
+                        </div>
+                        <span className={`badge ${instance.summary?.connectionStatus === "open" ? "is-good" : "is-warn"}`}>
+                          {instance.summary?.connectionStatus ?? "sem status"}
+                        </span>
+                      </div>
+                      <p className="section-copy">{instance.baseUrl}</p>
+                      <div className="badge-row">
+                        <span className="badge">{instance.dbSchema}</span>
+                        {instance.summary?.integration ? <span className="badge">{instance.summary.integration}</span> : null}
+                      </div>
+                      <div className="actions-row" style={{ marginTop: 14 }}>
+                        <button className="button-ghost" type="button" onClick={() => setActiveInstanceId(instance.id)}>
+                          Usar agora
+                        </button>
+                        <button className="button-ghost" type="button" onClick={() => assignInstanceForEditing(instance)}>
+                          Editar
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="empty-state">
+                  Nenhuma instancia cadastrada ainda. Preencha o formulario ao lado com o nome exato da instancia e o
+                  token correspondente.
+                </div>
+              )}
+            </section>
+            <section className="panel stack instance-form-shell">
+              <div className="panel-head">
+                <div>
+                  <p className="helper-kicker">{instanceDraft.instanceId ? "Editar instancia" : "Nova instancia"}</p>
+                  <h3 className="panel-title">
+                    {instanceDraft.instanceId ? "Atualize token, base URL e rotulo." : "Cadastre uma instancia com validacao imediata."}
+                  </h3>
+                </div>
+                <span className="badge is-good">Validacao real</span>
+              </div>
+              <div className="helper-grid">
+                <div className="helper-card">
+                  <strong>Nome exato</strong>
+                  <p className="section-copy">Use o mesmo nome que aparece em `fetchInstances` na Evolution.</p>
+                </div>
+                <div className="helper-card">
+                  <strong>Token correto</strong>
+                  <p className="section-copy">Se a instancia ja existir no banco, o cadastro agora atualiza em vez de duplicar.</p>
+                </div>
+              </div>
               <InstanceForm
-                onSubmit={async (payload) => {
-                  await runAction("register-instance", payload);
-                  await loadInstances();
-                  setNotice({
-                    tone: "success",
-                    text: "Instância validada e salva com sucesso.",
-                  });
-                }}
                 defaultBaseUrl={activeInstance?.baseUrl ?? "https://evolution.filipeivopereira.com"}
+                initialValues={instanceDraft}
+                onCancel={() =>
+                  setInstanceDraft({
+                    instanceId: "",
+                    instanceName: "",
+                    apiToken: "",
+                    baseUrl: activeInstance?.baseUrl ?? "",
+                    label: "",
+                    notes: "",
+                  })
+                }
+                onSubmit={handleRegisterInstance}
               />
             </section>
           </div>
@@ -1593,53 +1745,142 @@ function FileLoader({ label, accept, onLoad }: { label: string; accept?: string;
 
 function InstanceForm({
   defaultBaseUrl,
+  initialValues,
+  onCancel,
   onSubmit,
 }: {
   defaultBaseUrl: string;
-  onSubmit: (payload: {
-    instanceName: string;
-    apiToken: string;
-    baseUrl: string;
-    label: string;
-    notes: string;
-  }) => Promise<void>;
+  initialValues: InstanceFormPayload;
+  onCancel: () => void;
+  onSubmit: (payload: InstanceFormPayload) => Promise<void>;
 }) {
-  const [instanceName, setInstanceName] = useState("");
-  const [apiToken, setApiToken] = useState("");
-  const [baseUrl, setBaseUrl] = useState(defaultBaseUrl);
-  const [label, setLabel] = useState("");
-  const [notes, setNotes] = useState("");
+  const [formState, setFormState] = useState<InstanceFormPayload>({
+    ...initialValues,
+    baseUrl: initialValues.baseUrl || defaultBaseUrl,
+    label: initialValues.label || initialValues.instanceName || "",
+    notes: initialValues.notes || "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const isEditing = Boolean(formState.instanceId);
+
+  useEffect(() => {
+    setFormState({
+      ...initialValues,
+      baseUrl: initialValues.baseUrl || defaultBaseUrl,
+      label: initialValues.label || initialValues.instanceName || "",
+      notes: initialValues.notes || "",
+    });
+    setError("");
+  }, [defaultBaseUrl, initialValues]);
 
   return (
     <form
       className="stack"
       onSubmit={async (event) => {
         event.preventDefault();
-        await onSubmit({ instanceName, apiToken, baseUrl, label, notes });
-        setInstanceName("");
-        setApiToken("");
-        setLabel("");
-        setNotes("");
+        setError("");
+        setSubmitting(true);
+
+        try {
+          await onSubmit({
+            ...formState,
+            instanceName: formState.instanceName.trim(),
+            apiToken: formState.apiToken.trim(),
+            baseUrl: formState.baseUrl.trim(),
+            label: formState.label.trim(),
+            notes: formState.notes.trim(),
+          });
+        } catch (submissionError) {
+          setError(formatAppError(submissionError));
+        } finally {
+          setSubmitting(false);
+        }
       }}
     >
+      {error ? (
+        <div className="notice is-error" role="alert">
+          <span>{error}</span>
+        </div>
+      ) : null}
       <Field label="Rótulo amigável">
-        <input value={label} onChange={(event) => setLabel(event.target.value)} />
+        <input
+          value={formState.label}
+          onChange={(event) =>
+            setFormState((current) => ({ ...current, label: event.target.value }))
+          }
+        />
       </Field>
       <Field label="Nome exato da instância na Evolution">
-        <input value={instanceName} onChange={(event) => setInstanceName(event.target.value)} />
+        <input
+          autoCapitalize="none"
+          autoCorrect="off"
+          value={formState.instanceName}
+          onChange={(event) =>
+            setFormState((current) => ({
+              ...current,
+              instanceName: event.target.value,
+            }))
+          }
+        />
       </Field>
       <Field label="Token">
-        <input value={apiToken} onChange={(event) => setApiToken(event.target.value)} />
+        <input
+          autoCapitalize="none"
+          autoCorrect="off"
+          autoComplete="new-password"
+          type="password"
+          value={formState.apiToken}
+          onChange={(event) =>
+            setFormState((current) => ({ ...current, apiToken: event.target.value }))
+          }
+        />
       </Field>
       <Field label="Base URL">
-        <input value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} />
+        <input
+          value={formState.baseUrl}
+          onChange={(event) =>
+            setFormState((current) => ({ ...current, baseUrl: event.target.value }))
+          }
+        />
       </Field>
       <Field label="Notas">
-        <textarea value={notes} onChange={(event) => setNotes(event.target.value)} />
+        <textarea
+          value={formState.notes}
+          onChange={(event) =>
+            setFormState((current) => ({ ...current, notes: event.target.value }))
+          }
+        />
       </Field>
-      <button className="button" type="submit">
-        Validar e salvar instância
-      </button>
+      <p className="field-help">
+        A validacao consulta `/instance/fetchInstances` antes de salvar, entao voce recebe retorno real da Evolution.
+      </p>
+      <div className="actions-row">
+        <button className="button button-label-shell" disabled={submitting} type="submit">
+          <span className="button-label">
+            {submitting
+              ? isEditing
+                ? "Atualizando..."
+                : "Validando..."
+              : isEditing
+                ? "Atualizar instancia"
+                : "Validar e salvar instancia"}
+          </span>
+        </button>
+        {isEditing ? (
+          <button
+            className="button-ghost"
+            disabled={submitting}
+            type="button"
+            onClick={() => {
+              setError("");
+              onCancel();
+            }}
+          >
+            Cancelar edicao
+          </button>
+        ) : null}
+      </div>
     </form>
   );
 }

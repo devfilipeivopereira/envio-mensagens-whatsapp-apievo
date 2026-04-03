@@ -19,6 +19,14 @@ interface EvolutionRequestOptions {
   body?: Record<string, unknown> | null;
 }
 
+function extractInstanceRows(
+  response:
+    | { value?: Array<Record<string, unknown>> }
+    | Array<Record<string, unknown>>,
+) {
+  return Array.isArray(response) ? response : response.value ?? [];
+}
+
 function buildUrl(
   baseUrl: string,
   path: string,
@@ -81,13 +89,15 @@ export async function validateEvolutionInstance(input: {
     instanceName: input.instanceName,
   };
 
-  const response = await rawEvolutionRequest<{ value?: Array<Record<string, unknown>> }>(
+  const response = await rawEvolutionRequest<
+    { value?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+  >(
     fakeInstance,
     "/instance/fetchInstances",
     { method: "GET" },
   );
 
-  const found = response.value?.find(
+  const found = extractInstanceRows(response).find(
     (item) => String(item.name ?? "") === input.instanceName,
   );
 
@@ -101,13 +111,15 @@ export async function validateEvolutionInstance(input: {
 }
 
 export async function fetchEvolutionSummary(instance: InstanceRecord) {
-  const response = await rawEvolutionRequest<{ value?: Array<Record<string, unknown>> }>(
+  const response = await rawEvolutionRequest<
+    { value?: Array<Record<string, unknown>> } | Array<Record<string, unknown>>
+  >(
     instance,
     "/instance/fetchInstances",
     { method: "GET" },
   );
 
-  const found = response.value?.find(
+  const found = extractInstanceRows(response).find(
     (item) => String(item.name ?? "") === instance.instanceName,
   );
 
