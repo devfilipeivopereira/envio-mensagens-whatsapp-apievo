@@ -398,6 +398,24 @@ function replacePresetInstanceName(path: string, instanceName: string) {
   return path.replaceAll("{instanceName}", instanceName);
 }
 
+function formatAuthError(error: unknown) {
+  if (!(error instanceof Error)) {
+    return "Falha no login.";
+  }
+
+  const message = error.message.toLowerCase();
+
+  if (message.includes("invalid login credentials")) {
+    return "Login ou senha inválidos.";
+  }
+
+  if (message.includes("email not confirmed")) {
+    return "O email ainda não foi confirmado.";
+  }
+
+  return error.message;
+}
+
 export function OperationsConsole() {
   const [supabase] = useState(() => createBrowserSupabaseClient());
   const [session, setSession] = useState<Session | null>(null);
@@ -731,25 +749,25 @@ export function OperationsConsole() {
   async function handleLogin(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
-    try {
-      setAuthBusy(true);
-      const result = await supabase.auth.signInWithPassword({
-        email: loginEmail,
-        password: loginPassword,
-      });
+      try {
+        setAuthBusy(true);
+        const result = await supabase.auth.signInWithPassword({
+          email: loginEmail.trim(),
+          password: loginPassword,
+        });
 
       if (result.error) {
         throw result.error;
       }
 
       setNotice({ tone: "success", text: "Login realizado com sucesso." });
-    } catch (error) {
-      setNotice({
-        tone: "error",
-        text: error instanceof Error ? error.message : "Falha no login.",
-      });
-    } finally {
-      setAuthBusy(false);
+      } catch (error) {
+        setNotice({
+          tone: "error",
+          text: formatAuthError(error),
+        });
+      } finally {
+        setAuthBusy(false);
     }
   }
 
