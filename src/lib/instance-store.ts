@@ -1,82 +1,163 @@
 import { randomUUID } from "crypto";
 
-import { ensureBaseTables, ensureInstanceSchema, generateSchemaForInstance, getPool } from "@/lib/db";
+import { readStateJson, writeStateJson } from "@/lib/server-state";
 import type {
   BroadcastListRecord,
   CustomContact,
   DispatchJob,
   InstanceRecord,
 } from "@/lib/types";
-import { nowIso, normalizeDigits, requiredEnv } from "@/lib/utils";
+import { nowIso, normalizeDigits, safeSchemaName } from "@/lib/utils";
 
-function mapInstance(row: Record<string, unknown>): InstanceRecord {
+const INSTANCES_PATH = "registry/instances.json";
+
+function sortByRecent<T extends { createdAt: string; updatedAt: string }>(items: T[]) {
+  return [...items].sort((left, right) => {
+    const updatedDelta = new Date(right.updatedAt).getTime() - new Date(left.updatedAt).getTime();
+
+    if (updatedDelta !== 0) {
+      return updatedDelta;
+    }
+
+    return new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+  });
+}
+
+function sortDispatchJobs(items: DispatchJob[]) {
+  return [...items].sort((left, right) => {
+    const createdDelta = new Date(right.createdAt).getTime() - new Date(left.createdAt).getTime();
+
+    if (createdDelta !== 0) {
+      return createdDelta;
+    }
+
+    return new Date(right.scheduledFor).getTime() - new Date(left.scheduledFor).getTime();
+  });
+}
+
+function normalizeInstanceRecord(row: Partial<InstanceRecord> & Record<string, unknown>): InstanceRecord {
+  const createdAt = typeof row.createdAt === "string" ? row.createdAt : nowIso();
+  const instanceName = String(row.instanceName ?? row.instance_name ?? "").trim();
+
   return {
-    id: String(row.id),
-    instanceName: String(row.instance_name),
-    apiToken: String(row.api_token),
-    baseUrl: String(row.base_url),
-    dbSchema: String(row.db_schema),
+    id: typeof row.id === "string" ? row.id : randomUUID(),
+    instanceName,
+    apiToken: String(row.apiToken ?? row.api_token ?? "").trim(),
+    baseUrl: String(row.baseUrl ?? row.base_url ?? "").trim(),
+    dbSchema: String(row.dbSchema ?? row.db_schema ?? safeSchemaName(instanceName || "instance")),
     profile:
       typeof row.profile === "object" && row.profile !== null
         ? (row.profile as Record<string, unknown>)
         : {},
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
+    createdAt,
+    updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : createdAt,
   };
 }
 
-function safeSchema(schemaName: string) {
-  return schemaName.replace(/[^a-zA-Z0-9_]/g, "");
+function normalizeCustomContactRecord(
+  row: Partial<CustomContact> & Record<string, unknown>,
+): CustomContact {
+  const createdAt = typeof row.createdAt === "string" ? row.createdAt : nowIso();
+
+  return {
+    id: typeof row.id === "string" ? row.id : randomUUID(),
+    fullName: String(row.fullName ?? "").trim(),
+    phoneNumber: normalizeDigits(String(row.phoneNumber ?? "")),
+    email: typeof row.email === "string" ? row.email : null,
+    organization: typeof row.organization === "string" ? row.organization : null,
+    notes: typeof row.notes === "string" ? row.notes : null,
+    tags: Array.isArray(row.tags) ? row.tags.map((tag) => String(tag)) : [],
+    createdAt,
+    updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : createdAt,
+  };
+}
+
+function normalizeBroadcastListRecord(
+  row: Partial<BroadcastListRecord> & Record<string, unknown>,
+): BroadcastListRecord {
+  const createdAt = typeof row.createdAt === "string" ? row.createdAt : nowIso();
+
+  return {
+    id: typeof row.id === "string" ? row.id : randomUUID(),
+    name: String(row.name ?? "").trim(),
+    description: typeof row.description === "string" ? row.description : null,
+    recipients: Array.isArray(row.recipients)
+      ? row.recipients.map(
+          (recipient) => recipient as BroadcastListRecord["recipients"][number],
+        )
+      : [],
+    createdAt,
+    updatedAt: typeof row.updatedAt === "string" ? row.updatedAt : createdAt,
+  };
+}
+
+function normalizeDispatchJobRecord(
+  row: Partial<DispatchJob> & Record<string, unknown>,
+): DispatchJob {
+  const createdAt = typeof row.createdAt === "string" ? row.createdAt : nowIso();
+  const scheduledFor = typeof row.scheduledFor === "string" ? row.scheduledFor : createdAt;
+
+  return {
+    id: typeof row.id === "string" ? row.id : randomUUID(),
+    name: String(row.name ?? "Novo disparo"),
+    instanceId: String(row.instanceId ?? ""),
+    instanceName: String(row.instanceName ?? ""),
+    status: String(row.status ?? "queued") as DispatchJob["status"],
+    throttleMs: Number(row.throttleMs ?? 10000),
+    createdAt,
+    scheduledFor,
+    startedAt: typeof row.startedAt === "string" ? row.startedAt : null,
+    completedAt: typeof row.completedAt === "string" ? row.completedAt : null,
+    totalRecipients: Number(row.totalRecipients ?? 0),
+    successfulRecipients: Number(row.successfulRecipients ?? 0),
+    failedRecipients: Number(row.failedRecipients ?? 0),
+    message: row.message as DispatchJob["message"],
+    recipients: Array.isArray(row.recipients)
+      ? row.recipients.map(
+          (recipient) => recipient as DispatchJob["recipients"][number],
+        )
+      : [],
+  };
+}
+
+function customContactsPath(instanceId: string) {
+  return `instances/${instanceId}/custom-contacts.json`;
+}
+
+function broadcastListsPath(instanceId: string) {
+  return `instances/${instanceId}/broadcast-lists.json`;
+}
+
+function dispatchJobsPath(instanceId: string) {
+  return `instances/${instanceId}/dispatch-jobs.json`;
+}
+
+async function readInstancesFile() {
+  const rows = await readStateJson<Array<Record<string, unknown>>>(INSTANCES_PATH, []);
+  return sortByRecent(rows.map((row) => normalizeInstanceRecord(row)));
+}
+
+async function writeInstancesFile(instances: InstanceRecord[]) {
+  await writeStateJson(INSTANCES_PATH, sortByRecent(instances));
 }
 
 export async function listInstances() {
-  await ensureBaseTables();
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      select *
-      from public.app_instances
-      order by updated_at desc, created_at desc
-    `,
-  );
-
-  return result.rows.map((row) => mapInstance(row));
+  return readInstancesFile();
 }
 
 export async function getInstanceById(instanceId: string) {
-  await ensureBaseTables();
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      select *
-      from public.app_instances
-      where id = $1
-      limit 1
-    `,
-    [instanceId],
-  );
+  const instance = (await readInstancesFile()).find((item) => item.id === instanceId);
 
-  if (!result.rows[0]) {
+  if (!instance) {
     throw new Error("Instancia nao encontrada.");
   }
 
-  return mapInstance(result.rows[0]);
+  return instance;
 }
 
 export async function getInstanceByName(instanceName: string) {
-  await ensureBaseTables();
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      select *
-      from public.app_instances
-      where instance_name = $1
-      limit 1
-    `,
-    [instanceName],
-  );
-
-  return result.rows[0] ? mapInstance(result.rows[0]) : null;
+  const normalizedName = instanceName.trim();
+  return (await readInstancesFile()).find((item) => item.instanceName === normalizedName) ?? null;
 }
 
 export async function createManagedInstance(input: {
@@ -85,36 +166,27 @@ export async function createManagedInstance(input: {
   baseUrl: string;
   profile?: Record<string, unknown>;
 }) {
-  await ensureBaseTables();
-  const pool = getPool();
-  const schemaName = generateSchemaForInstance(input.instanceName);
-  const profile = input.profile ?? {};
+  const instances = await readInstancesFile();
+  const normalizedName = input.instanceName.trim();
 
-  const result = await pool.query(
-    `
-      insert into public.app_instances (
-        instance_name,
-        api_token,
-        base_url,
-        db_schema,
-        profile,
-        updated_at
-      )
-      values ($1, $2, $3, $4, $5::jsonb, now())
-      returning *
-    `,
-    [
-      input.instanceName,
-      input.apiToken,
-      input.baseUrl,
-      schemaName,
-      JSON.stringify(profile),
-    ],
-  );
+  if (instances.some((instance) => instance.instanceName === normalizedName)) {
+    throw new Error("Ja existe uma instancia com esse nome.");
+  }
 
-  await ensureInstanceSchema(schemaName);
+  const timestamp = nowIso();
+  const instance: InstanceRecord = {
+    id: randomUUID(),
+    instanceName: normalizedName,
+    apiToken: input.apiToken.trim(),
+    baseUrl: input.baseUrl.trim(),
+    dbSchema: safeSchemaName(normalizedName),
+    profile: input.profile ?? {},
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  };
 
-  return mapInstance(result.rows[0]);
+  await writeInstancesFile([instance, ...instances]);
+  return instance;
 }
 
 export async function updateManagedInstance(
@@ -126,35 +198,35 @@ export async function updateManagedInstance(
     profile?: Record<string, unknown>;
   },
 ) {
-  await ensureBaseTables();
-  const pool = getPool();
-  const profile = input.profile ?? {};
-  const result = await pool.query(
-    `
-      update public.app_instances
-      set
-        instance_name = $2,
-        api_token = $3,
-        base_url = $4,
-        profile = $5::jsonb,
-        updated_at = now()
-      where id = $1
-      returning *
-    `,
-    [
-      instanceId,
-      input.instanceName,
-      input.apiToken,
-      input.baseUrl,
-      JSON.stringify(profile),
-    ],
-  );
+  const instances = await readInstancesFile();
+  const targetIndex = instances.findIndex((instance) => instance.id === instanceId);
 
-  if (!result.rows[0]) {
+  if (targetIndex === -1) {
     throw new Error("Instancia nao encontrada para atualizacao.");
   }
 
-  return mapInstance(result.rows[0]);
+  const normalizedName = input.instanceName.trim();
+  const duplicate = instances.find(
+    (instance) => instance.id !== instanceId && instance.instanceName === normalizedName,
+  );
+
+  if (duplicate) {
+    throw new Error("Ja existe uma instancia com esse nome.");
+  }
+
+  const current = instances[targetIndex];
+  const updated: InstanceRecord = {
+    ...current,
+    instanceName: normalizedName,
+    apiToken: input.apiToken.trim(),
+    baseUrl: input.baseUrl.trim(),
+    profile: input.profile ?? {},
+    updatedAt: nowIso(),
+  };
+
+  instances[targetIndex] = updated;
+  await writeInstancesFile(instances);
+  return updated;
 }
 
 export async function ensureDefaultInstanceFromEnv() {
@@ -183,290 +255,104 @@ export async function ensureDefaultInstanceFromEnv() {
   });
 }
 
-async function getSchemaForInstance(instanceId: string) {
-  const instance = await getInstanceById(instanceId);
-
-  return {
-    instance,
-    schema: safeSchema(instance.dbSchema),
-  };
-}
-
 export async function getCustomContacts(instanceId: string) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      select *
-      from ${schema}.custom_contacts
-      order by updated_at desc, created_at desc
-    `,
-  );
-
-  return result.rows.map(
-    (row): CustomContact => ({
-      id: String(row.id),
-      fullName: String(row.full_name),
-      phoneNumber: String(row.phone_number),
-      email: typeof row.email === "string" ? row.email : null,
-      organization:
-        typeof row.organization === "string" ? row.organization : null,
-      notes: typeof row.notes === "string" ? row.notes : null,
-      tags: Array.isArray(row.tags)
-        ? row.tags.map((tag: unknown) => String(tag))
-        : [],
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    }),
-  );
+  await getInstanceById(instanceId);
+  const rows = await readStateJson<Array<Record<string, unknown>>>(customContactsPath(instanceId), []);
+  return sortByRecent(rows.map((row) => normalizeCustomContactRecord(row)));
 }
 
 export async function saveCustomContact(
   instanceId: string,
   payload: Omit<CustomContact, "createdAt" | "updatedAt">,
 ) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
+  await getInstanceById(instanceId);
+  const contacts = await getCustomContacts(instanceId);
   const contactId = payload.id || randomUUID();
-  const result = await pool.query(
-    `
-      insert into ${schema}.custom_contacts (
-        id,
-        full_name,
-        phone_number,
-        email,
-        organization,
-        notes,
-        tags,
-        created_at,
-        updated_at
-      )
-      values ($1, $2, $3, $4, $5, $6, $7::jsonb, now(), now())
-      on conflict (id) do update set
-        full_name = excluded.full_name,
-        phone_number = excluded.phone_number,
-        email = excluded.email,
-        organization = excluded.organization,
-        notes = excluded.notes,
-        tags = excluded.tags,
-        updated_at = now()
-      returning *
-    `,
-    [
-      contactId,
-      payload.fullName.trim(),
-      normalizeDigits(payload.phoneNumber),
-      payload.email,
-      payload.organization,
-      payload.notes,
-      JSON.stringify(payload.tags),
-    ],
-  );
+  const existing = contacts.find((contact) => contact.id === contactId);
+  const nextContact = normalizeCustomContactRecord({
+    ...existing,
+    ...payload,
+    id: contactId,
+    fullName: payload.fullName.trim(),
+    phoneNumber: payload.phoneNumber,
+    updatedAt: nowIso(),
+    createdAt: existing?.createdAt ?? nowIso(),
+  });
 
-  const row = result.rows[0];
+  const nextContacts = sortByRecent([
+    nextContact,
+    ...contacts.filter((contact) => contact.id !== contactId),
+  ]);
 
-  return {
-    id: String(row.id),
-    fullName: String(row.full_name),
-    phoneNumber: String(row.phone_number),
-    email: typeof row.email === "string" ? row.email : null,
-    organization: typeof row.organization === "string" ? row.organization : null,
-    notes: typeof row.notes === "string" ? row.notes : null,
-    tags: Array.isArray(row.tags)
-      ? row.tags.map((tag: unknown) => String(tag))
-      : [],
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-  } satisfies CustomContact;
+  await writeStateJson(customContactsPath(instanceId), nextContacts);
+  return nextContact;
 }
 
 export async function deleteCustomContact(instanceId: string, contactId: string) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
-  await pool.query(
-    `
-      delete from ${schema}.custom_contacts
-      where id = $1
-    `,
-    [contactId],
+  await getInstanceById(instanceId);
+  const contacts = await getCustomContacts(instanceId);
+  await writeStateJson(
+    customContactsPath(instanceId),
+    contacts.filter((contact) => contact.id !== contactId),
   );
 }
 
 export async function getBroadcastLists(instanceId: string) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      select *
-      from ${schema}.broadcast_lists
-      order by updated_at desc, created_at desc
-    `,
-  );
-
-  return result.rows.map(
-    (row): BroadcastListRecord => ({
-      id: String(row.id),
-      name: String(row.name),
-      description: typeof row.description === "string" ? row.description : null,
-      recipients: Array.isArray(row.recipients)
-        ? row.recipients.map(
-            (recipient: unknown) =>
-              recipient as BroadcastListRecord["recipients"][number],
-          )
-        : [],
-      createdAt: String(row.created_at),
-      updatedAt: String(row.updated_at),
-    }),
-  );
+  await getInstanceById(instanceId);
+  const rows = await readStateJson<Array<Record<string, unknown>>>(broadcastListsPath(instanceId), []);
+  return sortByRecent(rows.map((row) => normalizeBroadcastListRecord(row)));
 }
 
 export async function saveBroadcastList(
   instanceId: string,
   payload: Omit<BroadcastListRecord, "createdAt" | "updatedAt">,
 ) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
+  await getInstanceById(instanceId);
+  const lists = await getBroadcastLists(instanceId);
   const listId = payload.id || randomUUID();
-  const result = await pool.query(
-    `
-      insert into ${schema}.broadcast_lists (
-        id,
-        name,
-        description,
-        recipients,
-        created_at,
-        updated_at
-      )
-      values ($1, $2, $3, $4::jsonb, now(), now())
-      on conflict (id) do update set
-        name = excluded.name,
-        description = excluded.description,
-        recipients = excluded.recipients,
-        updated_at = now()
-      returning *
-    `,
-    [
-      listId,
-      payload.name.trim(),
-      payload.description,
-      JSON.stringify(payload.recipients),
-    ],
-  );
+  const existing = lists.find((list) => list.id === listId);
+  const nextList = normalizeBroadcastListRecord({
+    ...existing,
+    ...payload,
+    id: listId,
+    name: payload.name.trim(),
+    updatedAt: nowIso(),
+    createdAt: existing?.createdAt ?? nowIso(),
+  });
 
-  const row = result.rows[0];
+  const nextLists = sortByRecent([
+    nextList,
+    ...lists.filter((list) => list.id !== listId),
+  ]);
 
-  return {
-    id: String(row.id),
-    name: String(row.name),
-    description: typeof row.description === "string" ? row.description : null,
-    recipients: Array.isArray(row.recipients)
-      ? row.recipients.map(
-          (recipient: unknown) =>
-            recipient as BroadcastListRecord["recipients"][number],
-        )
-      : [],
-    createdAt: String(row.created_at),
-    updatedAt: String(row.updated_at),
-  } satisfies BroadcastListRecord;
+  await writeStateJson(broadcastListsPath(instanceId), nextLists);
+  return nextList;
 }
 
 export async function deleteBroadcastList(instanceId: string, listId: string) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
-  await pool.query(
-    `
-      delete from ${schema}.broadcast_lists
-      where id = $1
-    `,
-    [listId],
+  await getInstanceById(instanceId);
+  const lists = await getBroadcastLists(instanceId);
+  await writeStateJson(
+    broadcastListsPath(instanceId),
+    lists.filter((list) => list.id !== listId),
   );
 }
 
 export async function listDispatchJobs(instanceId: string) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
-  const result = await pool.query(
-    `
-      select *
-      from ${schema}.dispatch_jobs
-      order by created_at desc
-    `,
-  );
-
-  return result.rows.map((row) => ({
-    id: String(row.id),
-    name: String(row.name),
-    instanceId: String(row.instance_id),
-    instanceName: String(row.instance_name),
-    status: String(row.status) as DispatchJob["status"],
-    throttleMs: Number(row.throttle_ms),
-    createdAt: String(row.created_at),
-    scheduledFor: String(row.scheduled_for),
-    startedAt: row.started_at ? String(row.started_at) : null,
-    completedAt: row.completed_at ? String(row.completed_at) : null,
-    totalRecipients: Number(row.total_recipients),
-    successfulRecipients: Number(row.successful_recipients),
-    failedRecipients: Number(row.failed_recipients),
-    message: row.message as DispatchJob["message"],
-    recipients: row.recipients as DispatchJob["recipients"],
-  })) satisfies DispatchJob[];
+  await getInstanceById(instanceId);
+  const rows = await readStateJson<Array<Record<string, unknown>>>(dispatchJobsPath(instanceId), []);
+  return sortDispatchJobs(rows.map((row) => normalizeDispatchJobRecord(row)));
 }
 
 export async function upsertDispatchJob(instanceId: string, job: DispatchJob) {
-  const { schema } = await getSchemaForInstance(instanceId);
-  const pool = getPool();
-  await pool.query(
-    `
-      insert into ${schema}.dispatch_jobs (
-        id,
-        name,
-        instance_id,
-        instance_name,
-        status,
-        throttle_ms,
-        created_at,
-        scheduled_for,
-        started_at,
-        completed_at,
-        total_recipients,
-        successful_recipients,
-        failed_recipients,
-        message,
-        recipients
-      )
-      values (
-        $1, $2, $3, $4, $5, $6, $7::timestamptz, $8::timestamptz, $9::timestamptz, $10::timestamptz,
-        $11, $12, $13, $14::jsonb, $15::jsonb
-      )
-      on conflict (id) do update set
-        name = excluded.name,
-        status = excluded.status,
-        throttle_ms = excluded.throttle_ms,
-        scheduled_for = excluded.scheduled_for,
-        started_at = excluded.started_at,
-        completed_at = excluded.completed_at,
-        total_recipients = excluded.total_recipients,
-        successful_recipients = excluded.successful_recipients,
-        failed_recipients = excluded.failed_recipients,
-        message = excluded.message,
-        recipients = excluded.recipients
-    `,
-    [
-      job.id,
-      job.name,
-      job.instanceId,
-      job.instanceName,
-      job.status,
-      job.throttleMs,
-      job.createdAt,
-      job.scheduledFor,
-      job.startedAt,
-      job.completedAt,
-      job.totalRecipients,
-      job.successfulRecipients,
-      job.failedRecipients,
-      JSON.stringify(job.message),
-      JSON.stringify(job.recipients),
-    ],
-  );
+  await getInstanceById(instanceId);
+  const jobs = await listDispatchJobs(instanceId);
+  const nextJob = normalizeDispatchJobRecord(job as DispatchJob & Record<string, unknown>);
+  const nextJobs = sortDispatchJobs([
+    nextJob,
+    ...jobs.filter((item) => item.id !== nextJob.id),
+  ]);
+
+  await writeStateJson(dispatchJobsPath(instanceId), nextJobs);
 }
+

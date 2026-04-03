@@ -1,6 +1,5 @@
 import { randomUUID } from "crypto";
 
-import { getPool } from "@/lib/db";
 import {
   fetchChats,
   fetchContacts,
@@ -15,6 +14,7 @@ import {
   listInstances,
   upsertDispatchJob,
 } from "@/lib/instance-store";
+import { readStateJson, removeStateFile, writeStateJson } from "@/lib/server-state";
 import type {
   CampaignAudienceRequest,
   DispatchJob,
@@ -24,8 +24,17 @@ import type {
 } from "@/lib/types";
 import { dedupeRecipients, makeRecipient, nowIso, sleep } from "@/lib/utils";
 
-const RUNTIME_KEY = "global_dispatch";
-const LOCK_KEY = 981337;
+const DISPATCH_STATE_PATH = "runtime/dispatch-state.json";
+const DISPATCH_LOCK_PATH = "runtime/dispatch-lock.json";
+
+interface DispatchRuntimeState {
+  lastSentAt: string | null;
+}
+
+interface DispatchLockState {
+  ownerId: string;
+  expiresAt: string;
+}
 
 export async function buildCampaignRecipients(
   instanceId: string,
@@ -186,55 +195,47 @@ export async function enqueueDispatchJob(input: {
 }
 
 async function acquireDispatchLock() {
-  const pool = getPool();
-  const result = await pool.query(
-    "select pg_try_advisory_lock($1) as locked",
-    [LOCK_KEY],
-  );
+  const now = Date.now();
+  const current = await readStateJson<DispatchLockState | null>(DISPATCH_LOCK_PATH, null);
 
-  return Boolean(result.rows[0]?.locked);
+  if (current && new Date(current.expiresAt).getTime() > now) {
+    return null;
+  }
+
+  const ownerId = randomUUID();
+  await writeStateJson(DISPATCH_LOCK_PATH, {
+    ownerId,
+    expiresAt: new Date(now + 120_000).toISOString(),
+  } satisfies DispatchLockState);
+
+  const confirmed = await readStateJson<DispatchLockState | null>(DISPATCH_LOCK_PATH, null);
+  return confirmed?.ownerId === ownerId ? ownerId : null;
 }
 
-async function releaseDispatchLock() {
-  const pool = getPool();
-  await pool.query("select pg_advisory_unlock($1)", [LOCK_KEY]);
+async function releaseDispatchLock(ownerId: string | null) {
+  if (!ownerId) {
+    return;
+  }
+
+  const current = await readStateJson<DispatchLockState | null>(DISPATCH_LOCK_PATH, null);
+
+  if (current?.ownerId === ownerId) {
+    await removeStateFile(DISPATCH_LOCK_PATH);
+  }
 }
 
 async function getLastSentAt() {
-  const pool = getPool();
-  await pool.query(
-    `
-      insert into public.dispatch_runtime_state (runtime_key, last_sent_at)
-      values ($1, null)
-      on conflict (runtime_key) do nothing
-    `,
-    [RUNTIME_KEY],
-  );
-  const result = await pool.query(
-    `
-      select last_sent_at
-      from public.dispatch_runtime_state
-      where runtime_key = $1
-      limit 1
-    `,
-    [RUNTIME_KEY],
-  );
+  const state = await readStateJson<DispatchRuntimeState>(DISPATCH_STATE_PATH, {
+    lastSentAt: null,
+  });
 
-  const value = result.rows[0]?.last_sent_at;
-  return value ? new Date(value).getTime() : 0;
+  return state.lastSentAt ? new Date(state.lastSentAt).getTime() : 0;
 }
 
 async function setLastSentAt(value: string) {
-  const pool = getPool();
-  await pool.query(
-    `
-      insert into public.dispatch_runtime_state (runtime_key, last_sent_at)
-      values ($1, $2::timestamptz)
-      on conflict (runtime_key) do update set
-        last_sent_at = excluded.last_sent_at
-    `,
-    [RUNTIME_KEY, value],
-  );
+  await writeStateJson(DISPATCH_STATE_PATH, {
+    lastSentAt: value,
+  } satisfies DispatchRuntimeState);
 }
 
 async function findDueJobs() {
@@ -324,13 +325,13 @@ async function processSingleJob(job: DispatchJob, deadline: number) {
 }
 
 export async function processDueDispatchJobs(maxDurationMs = 50_000) {
-  const lockAcquired = await acquireDispatchLock();
+  const lockOwner = await acquireDispatchLock();
 
-  if (!lockAcquired) {
+  if (!lockOwner) {
     return {
       processed: 0,
       skipped: true,
-      reason: "Outro worker já está processando a fila.",
+      reason: "Outro worker ja esta processando a fila.",
     };
   }
 
@@ -354,6 +355,6 @@ export async function processDueDispatchJobs(maxDurationMs = 50_000) {
       skipped: false,
     };
   } finally {
-    await releaseDispatchLock();
+    await releaseDispatchLock(lockOwner);
   }
 }
