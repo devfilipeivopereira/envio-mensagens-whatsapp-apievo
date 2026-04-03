@@ -14,8 +14,8 @@ const bodyFont = Source_Sans_3({
 });
 
 export const metadata: Metadata = {
-  title: "Evolution Control Room",
-  description: "Painel operacional multi-instância para Evolution API com Supabase.",
+  title: "Central de Mensagens WhatsApp",
+  description: "Painel de operação para envio, públicos, agenda e instâncias do WhatsApp com fluxo guiado para usuário final.",
 };
 
 export default function RootLayout({

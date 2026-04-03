@@ -2,6 +2,7 @@
 
 import Papa from "papaparse";
 import type { Session } from "@supabase/supabase-js";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { useDeferredValue, useEffect, useState } from "react";
 
 import { createBrowserSupabaseClient } from "@/lib/browser-supabase";
@@ -24,12 +25,21 @@ type SectionKey =
   | "overview"
   | "direct"
   | "messages"
+  | "status"
   | "campaigns"
   | "groups"
   | "contacts"
   | "lists"
   | "instances"
   | "explorer";
+
+type WorkspaceKey =
+  | "home"
+  | "send"
+  | "audience"
+  | "schedule"
+  | "connections"
+  | "advanced";
 
 interface ManagedInstanceView {
   id: string;
@@ -114,26 +124,169 @@ const NAV_ITEMS: Array<{ key: SectionKey; label: string }> = [
   { key: "explorer", label: "Explorador API" },
 ];
 
+const PRIMARY_NAV_ITEMS: Array<{
+  key: WorkspaceKey;
+  label: string;
+  description: string;
+  defaultSection: SectionKey;
+}> = [
+  {
+    key: "home",
+    label: "Inicio",
+    description: "Resumo da operacao e proximo passo.",
+    defaultSection: "overview",
+  },
+  {
+    key: "send",
+    label: "Enviar",
+    description: "Mensagem rapida, conversa e status.",
+    defaultSection: "direct",
+  },
+  {
+    key: "audience",
+    label: "Publico",
+    description: "Contatos, grupos e listas.",
+    defaultSection: "contacts",
+  },
+  {
+    key: "schedule",
+    label: "Agenda",
+    description: "Campanhas e fila de disparo.",
+    defaultSection: "campaigns",
+  },
+  {
+    key: "connections",
+    label: "Conexoes",
+    description: "Instancias e conta ativa.",
+    defaultSection: "instances",
+  },
+  {
+    key: "advanced",
+    label: "Avancado",
+    description: "Recursos tecnicos e explorer.",
+    defaultSection: "explorer",
+  },
+];
+
+const SECTION_TO_WORKSPACE: Record<SectionKey, WorkspaceKey> = {
+  overview: "home",
+  direct: "send",
+  messages: "send",
+  status: "send",
+  campaigns: "schedule",
+  groups: "audience",
+  contacts: "audience",
+  lists: "audience",
+  instances: "connections",
+  explorer: "advanced",
+};
+
+const WORKSPACE_TABS: Record<WorkspaceKey, Array<{ key: SectionKey; label: string }>> = {
+  home: [{ key: "overview", label: "Visao geral" }],
+  send: [
+    { key: "direct", label: "Mensagem rapida" },
+    { key: "messages", label: "Conversas" },
+    { key: "status", label: "Status" },
+  ],
+  audience: [
+    { key: "contacts", label: "Contatos" },
+    { key: "groups", label: "Grupos" },
+    { key: "lists", label: "Listas" },
+  ],
+  schedule: [{ key: "campaigns", label: "Campanhas e fila" }],
+  connections: [{ key: "instances", label: "Instancias" }],
+  advanced: [{ key: "explorer", label: "Ferramentas tecnicas" }],
+};
+
+const WORKSPACE_COPY: Record<
+  WorkspaceKey,
+  { kicker: string; title: string; description: string }
+> = {
+  home: {
+    kicker: "Central de operacao",
+    title: "Tudo o que importa aparece em linguagem de negocio.",
+    description:
+      "Acompanhe sua instancia, veja a fila e encontre rapidamente a proxima acao sem precisar conhecer a Evolution API.",
+  },
+  send: {
+    kicker: "Envio guiado",
+    title: "Envie mensagens sem virar campanha por acidente.",
+    description:
+      "Escolha o destino, monte o conteudo e decida se vai mandar agora, agendar ou responder a partir de uma conversa.",
+  },
+  audience: {
+    kicker: "Base de destinatarios",
+    title: "Organize contatos, grupos e listas do jeito que o usuario pensa.",
+    description:
+      "Aqui voce prepara quem vai receber mensagens, sem depender de nomes tecnicos de endpoint ou JID.",
+  },
+  schedule: {
+    kicker: "Agenda protegida",
+    title: "Planeje disparos e acompanhe a fila com seguranca.",
+    description:
+      "Crie campanhas, revise quem vai receber e acompanhe a execucao com pausa minima de 10 segundos entre envios.",
+  },
+  connections: {
+    kicker: "Conexao com WhatsApp",
+    title: "Gerencie as instancias fora do fluxo de envio.",
+    description:
+      "Cadastre, valide e selecione a conexao ativa antes de enviar mensagens ou montar listas.",
+  },
+  advanced: {
+    kicker: "Ferramentas tecnicas",
+    title: "Use a API manualmente so quando realmente precisar.",
+    description:
+      "O explorador fica isolado aqui para nao atrapalhar quem so quer operar o sistema.",
+  },
+};
+
+const HOME_STEPS: Array<{
+  title: string;
+  description: string;
+  section: SectionKey;
+}> = [
+  {
+    title: "1. Escolha a conexao",
+    description: "Ative a instancia que vai enviar as mensagens e confira o status.",
+    section: "instances",
+  },
+  {
+    title: "2. Organize o publico",
+    description: "Cadastre contatos, ajuste grupos ou salve listas reutilizaveis.",
+    section: "contacts",
+  },
+  {
+    title: "3. Envie com clareza",
+    description: "Use o envio rapido para mandar uma mensagem sem entrar no fluxo de campanha.",
+    section: "direct",
+  },
+  {
+    title: "4. Agende e acompanhe",
+    description: "Monte campanhas e acompanhe a fila sem perder o controle do ritmo.",
+    section: "campaigns",
+  },
+];
+
 const CAPABILITIES = [
   {
-    title: "Guiado para qualquer pessoa",
+    title: "Clareza para quem opera",
     description:
-      "Mensagens, campanhas, contatos, grupos, listas, instâncias e explorer em linguagem simples.",
+      "As áreas principais seguem tarefas reais do dia a dia: enviar, organizar público, acompanhar agenda e conectar contas.",
   },
   {
-    title: "Fila segura e agendamento",
+    title: "Fila segura",
     description:
-      "Toda campanha respeita pausa mínima de 10 segundos e pode ficar agendada para rodar via cron no Vercel.",
+      "Toda campanha respeita pausa mínima de 10 segundos entre mensagens para reduzir risco no número.",
   },
   {
-    title: "Multi-instância de verdade",
+    title: "Mais de uma conta",
     description:
-      "Cada instância usa perfil próprio e schema próprio no Postgres do Supabase.",
+      "Cada instância fica separada, com seu próprio perfil e sua própria base de dados.",
   },
   {
-    title: "Cobertura total da Evolution",
+    title: "Modo técnico isolado",
     description:
-      "Além do modo amigável, o Explorador API deixa acessar qualquer endpoint manualmente.",
+      "O explorador da API continua disponível, mas fora do fluxo principal para não atrapalhar o usuário final.",
   },
 ];
 
@@ -481,6 +634,19 @@ function formatDateTime(value?: string | number | null) {
   }).format(date);
 }
 
+function formatConnectionStatus(value?: string | null) {
+  switch (value) {
+    case "open":
+      return "conectada";
+    case "connecting":
+      return "conectando";
+    case "close":
+      return "desconectada";
+    default:
+      return "sem status";
+  }
+}
+
 function replacePresetInstanceName(path: string, instanceName: string) {
   return path.replaceAll("{instanceName}", instanceName);
 }
@@ -529,8 +695,32 @@ function formatAppError(error: unknown) {
   return error.message;
 }
 
+function normalizeSectionParam(value: string | null): SectionKey {
+  const allowed: SectionKey[] = [
+    "overview",
+    "direct",
+    "messages",
+    "status",
+    "campaigns",
+    "groups",
+    "contacts",
+    "lists",
+    "instances",
+    "explorer",
+  ];
+
+  if (value && allowed.includes(value as SectionKey)) {
+    return value as SectionKey;
+  }
+
+  return "overview";
+}
+
 export function OperationsConsole() {
   const [supabase] = useState(() => createBrowserSupabaseClient());
+  const pathname = usePathname();
+  const router = useRouter();
+  const searchParams = useSearchParams();
   const [session, setSession] = useState<Session | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
   const [authBusy, setAuthBusy] = useState(false);
@@ -660,6 +850,20 @@ export function OperationsConsole() {
   }, [session]);
 
   useEffect(() => {
+    const sectionFromUrl = searchParams.get("section");
+
+    if (!sectionFromUrl) {
+      return;
+    }
+
+    const nextSection = normalizeSectionParam(sectionFromUrl);
+
+    if (nextSection !== activeSection) {
+      setActiveSection(nextSection);
+    }
+  }, [searchParams, activeSection]);
+
+  useEffect(() => {
     if (!session || !activeInstanceId) {
       return;
     }
@@ -703,6 +907,14 @@ export function OperationsConsole() {
       window.clearInterval(interval);
     };
   }, [session, activeInstanceId]);
+
+  function navigateToSection(nextSection: SectionKey) {
+    setActiveSection(nextSection);
+
+    const params = new URLSearchParams(searchParams.toString());
+    params.set("section", nextSection);
+    router.replace(`${pathname}?${params.toString()}`, { scroll: false });
+  }
 
   async function authorizedFetch(url: string, init?: RequestInit) {
     if (!session) {
@@ -841,7 +1053,7 @@ export function OperationsConsole() {
       return nextLine;
     });
     setDirectLabel(label);
-    setActiveSection("direct");
+    navigateToSection("direct");
   }
 
   function appendBroadcastListToDirectComposer(list: BroadcastListRecord) {
@@ -857,7 +1069,7 @@ export function OperationsConsole() {
       tone: "info",
       text: `Lista ${list.name} adicionada ao envio rapido.`,
     });
-    setActiveSection("direct");
+    navigateToSection("direct");
   }
 
   function clearDirectComposer() {
@@ -915,7 +1127,7 @@ export function OperationsConsole() {
       label: String(instance.profile.label ?? instance.instanceName),
       notes: String(instance.profile.notes ?? ""),
     });
-    setActiveSection("instances");
+    navigateToSection("instances");
   }
 
   async function handleRegisterInstance(payload: InstanceFormPayload) {
@@ -1286,6 +1498,9 @@ export function OperationsConsole() {
 
   const activeInstance = instances.find((instance) => instance.id === activeInstanceId) ?? null;
   const activeSummary = activeInstance?.summary ?? null;
+  const activeWorkspace = SECTION_TO_WORKSPACE[activeSection];
+  const workspaceTabs = WORKSPACE_TABS[activeWorkspace];
+  const workspaceCopy = WORKSPACE_COPY[activeWorkspace];
   const directRecipients = parseDirectRecipientsInput(directTarget);
   const quickChats = chats.slice(0, 6);
   const quickContacts = syncedContacts.filter((contact) => !contact.isGroup).slice(0, 6);
@@ -1308,9 +1523,9 @@ export function OperationsConsole() {
             <div className="core">
               <div className="hero-copy">
                 <p className="badge is-good">Evolution + Supabase + Vercel</p>
-                <h1 className="hero-title">Um cockpit claro para operar toda a sua stack WhatsApp.</h1>
+                <h1 className="hero-title">Uma central clara para enviar, organizar e acompanhar mensagens no WhatsApp.</h1>
                 <p className="brand-subtitle">
-                  Painel multi-instância, campanhas protegidas, listas agendadas e Explorador completo da Evolution API.
+                  Interface pensada para o usuário final, com os recursos técnicos separados para não atrapalhar a operação do dia a dia.
                 </p>
               </div>
             </div>
@@ -1354,10 +1569,10 @@ export function OperationsConsole() {
     <div className="app-shell">
       <aside className="sidebar">
         <div className="brand-block">
-          <div className="brand-mark">EC</div>
+          <div className="brand-mark">CM</div>
           <div>
-            <h1 className="brand-title">Evolution Control Room</h1>
-            <p className="brand-subtitle">UI operacional com Supabase, Explorer e cron Vercel.</p>
+            <h1 className="brand-title">Central de Mensagens</h1>
+            <p className="brand-subtitle">Fluxo diário em linguagem simples, com o modo técnico isolado quando necessário.</p>
           </div>
         </div>
         <div className="card sidebar-card">
@@ -1376,9 +1591,9 @@ export function OperationsConsole() {
           </div>
         </div>
         <div className="sidebar-note">
-          <p className="helper-kicker">Layout compacto</p>
+          <p className="helper-kicker">Uso diário</p>
           <p className="section-copy">
-            NavegaÃ§Ã£o principal no topo para caber melhor em notebook e navegador no zoom normal.
+            Primeiro vem o que a pessoa quer fazer. O técnico ficou concentrado apenas na área avançada.
           </p>
         </div>
         <button className="button-ghost sidebar-logout" type="button" onClick={handleLogout}>
@@ -1395,45 +1610,69 @@ export function OperationsConsole() {
 
         <section className="workspace-header">
           <div>
-            <p className="helper-kicker">Painel operacional</p>
-            <h2 className="workspace-title">Tudo visÃ­vel sem depender de zoom.</h2>
+            <p className="helper-kicker">{workspaceCopy.kicker}</p>
+            <h2 className="workspace-title">{workspaceCopy.title}</h2>
             <p className="section-copy">
-              Menu reposicionado, topo mais enxuto e Ã¡reas distribuÃ­das para uso confortÃ¡vel no navegador.
+              {workspaceCopy.description}
             </p>
           </div>
           <div className="workspace-header-badges">
-            <span className="badge is-good">NavegaÃ§Ã£o compacta</span>
+            <span className="badge is-good">Fluxo guiado</span>
             {activeInstance ? (
-              <span className="badge">{activeInstance.instanceName}</span>
+              <span className="badge">Instância ativa: {activeInstance.instanceName}</span>
             ) : (
-              <span className="badge">Sem instÃ¢ncia ativa</span>
+              <span className="badge">Sem instância ativa</span>
             )}
           </div>
         </section>
 
         <nav className="workspace-nav" aria-label="SeÃ§Ãµes do painel">
-          {NAV_ITEMS.map((item, index) => (
+          {PRIMARY_NAV_ITEMS.map((item, index) => (
             <button
               key={item.key}
-              className={`workspace-nav-button ${activeSection === item.key ? "is-active" : ""}`}
-              onClick={() => setActiveSection(item.key)}
+              className={`workspace-nav-button ${activeWorkspace === item.key ? "is-active" : ""}`}
+              onClick={() => navigateToSection(item.defaultSection)}
               type="button"
             >
               <span className="nav-index">{String(index + 1).padStart(2, "0")}</span>
-              <span>{item.label}</span>
+              <span className="nav-copy">
+                <strong>{item.label}</strong>
+                <small>{item.description}</small>
+              </span>
             </button>
           ))}
         </nav>
 
+        {workspaceTabs.length > 1 ? (
+          <div className="workspace-subnav" aria-label="Tarefas da área atual">
+            {workspaceTabs.map((item) => (
+              <button
+                key={item.key}
+                className={`workspace-subnav-button ${activeSection === item.key ? "is-active" : ""}`}
+                onClick={() => navigateToSection(item.key)}
+                type="button"
+              >
+                {item.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
+
         <section className="hero">
           <div className="hero-top">
             <div>
-              <p className="badge is-good">Modo guiado + Explorer total</p>
-              <h2 className="hero-title">{activeInstance?.instanceName ?? "Sem instância"}</h2>
+              <p className="badge is-good">
+                {activeWorkspace === "advanced" ? "Área avançada" : "Área guiada"}
+              </p>
+              <h2 className="hero-title">
+                {activeInstance?.profile.label
+                  ? String(activeInstance.profile.label)
+                  : activeInstance?.instanceName ?? "Conecte uma instância"}
+              </h2>
               <p className="brand-subtitle">
                 {activeSummary
-                  ? `Conexão ${activeSummary.connectionStatus} • ${activeSummary.integration ?? "sem integração"}`
-                  : "Cadastre uma instância para começar."}
+                  ? `Conta ${formatConnectionStatus(activeSummary.connectionStatus)}${activeSummary.profileName ? ` • ${activeSummary.profileName}` : ""}`
+                  : "Cadastre e selecione uma instância para começar a operar."}
               </p>
             </div>
             <div className="actions-row">
@@ -1467,24 +1706,26 @@ export function OperationsConsole() {
             <section className="panel overview-feature stack">
               <div className="panel-head">
                 <div>
-                  <p className="badge is-good">Sala de controle</p>
-                  <h3 className="panel-title">Operacao diaria, campanhas e Explorer no mesmo ritmo visual.</h3>
+                  <p className="badge is-good">Comece por aqui</p>
+                  <h3 className="panel-title">O sistema agora segue a jornada de trabalho do usuário final.</h3>
                 </div>
-                <span className="badge">{instances.length} instancias</span>
+                <span className="badge">{instances.length} conexões</span>
               </div>
               <p className="section-copy">
-                O painel agora prioriza leitura rapida, acoes mais claras e blocos com peso visual melhor distribuido
-                para desktop, notebook e mobile.
+                Em vez de pensar na API, você pode seguir uma sequência simples para conectar, organizar o público, enviar e acompanhar.
               </p>
-              <div className="helper-grid">
-                <div className="helper-card">
-                  <strong>Fila protegida</strong>
-                  <p className="section-copy">Cada disparo respeita o intervalo minimo de 10 segundos entre mensagens.</p>
-                </div>
-                <div className="helper-card">
-                  <strong>Multi-instancia</strong>
-                  <p className="section-copy">Cada instancia usa perfil proprio e schema dedicado no Postgres.</p>
-                </div>
+              <div className="journey-grid">
+                {HOME_STEPS.map((step) => (
+                  <button
+                    className="journey-card"
+                    key={step.title}
+                    onClick={() => navigateToSection(step.section)}
+                    type="button"
+                  >
+                    <strong>{step.title}</strong>
+                    <p className="section-copy">{step.description}</p>
+                  </button>
+                ))}
               </div>
             </section>
             <div className="overview-side-stack">
@@ -1795,7 +2036,7 @@ export function OperationsConsole() {
                 </div>
               </div>
             </section>
-            <section className="panel stack">
+            <section className="panel stack legacy-direct-panel" aria-hidden="true">
               <Field label="Destino">
                 <input value={directTarget} onChange={(event) => setDirectTarget(event.target.value)} />
               </Field>
@@ -1809,6 +2050,173 @@ export function OperationsConsole() {
               <button className="button" type="button" onClick={handleQueueDirectMessage}>
                 Enfileirar envio
               </button>
+            </section>
+          </div>
+        ) : null}
+
+        {activeSection === "status" ? (
+          <div className="two-grid">
+            <section className="panel stack">
+              <div className="panel-head">
+                <div>
+                  <p className="helper-kicker">Status do WhatsApp</p>
+                  <h3 className="panel-title">Publique um status sem sair da central de envio.</h3>
+                  <p className="section-copy">
+                    Use esta área para avisos rápidos, convites, chamadas para culto ou qualquer atualização que deva aparecer no status.
+                  </p>
+                </div>
+              </div>
+              <div className="field-grid">
+                <Field label="Tipo">
+                  <select
+                    value={statusDraft.type}
+                    onChange={(event) =>
+                      setStatusDraft((current) => ({
+                        ...current,
+                        type: event.target.value as StatusDraft["type"],
+                      }))
+                    }
+                  >
+                    <option value="text">Texto</option>
+                    <option value="image">Imagem</option>
+                    <option value="video">Video</option>
+                    <option value="audio">Audio</option>
+                  </select>
+                </Field>
+                <Field label="Enviar para">
+                  <select
+                    value={statusDraft.allContacts ? "all" : "selected"}
+                    onChange={(event) =>
+                      setStatusDraft((current) => ({
+                        ...current,
+                        allContacts: event.target.value === "all",
+                      }))
+                    }
+                  >
+                    <option value="all">Todos os contatos</option>
+                    <option value="selected">Somente números escolhidos</option>
+                  </select>
+                </Field>
+              </div>
+              <Field label={statusDraft.type === "text" ? "Texto do status" : "Base64 ou URL"}>
+                <textarea
+                  value={statusDraft.content}
+                  onChange={(event) =>
+                    setStatusDraft((current) => ({
+                      ...current,
+                      content: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              {statusDraft.type !== "text" ? (
+                <FileLoader
+                  label="Carregar arquivo"
+                  onLoad={async (file) => {
+                    const result = await readFileAsBase64(file);
+                    setStatusDraft((current) => ({
+                      ...current,
+                      content: result.base64,
+                    }));
+                  }}
+                />
+              ) : null}
+              <Field label="Legenda (opcional)">
+                <input
+                  value={statusDraft.caption}
+                  onChange={(event) =>
+                    setStatusDraft((current) => ({
+                      ...current,
+                      caption: event.target.value,
+                    }))
+                  }
+                />
+              </Field>
+              {statusDraft.type === "text" ? (
+                <div className="field-grid">
+                  <Field label="Cor de fundo">
+                    <input
+                      type="color"
+                      value={statusDraft.backgroundColor}
+                      onChange={(event) =>
+                        setStatusDraft((current) => ({
+                          ...current,
+                          backgroundColor: event.target.value,
+                        }))
+                      }
+                    />
+                  </Field>
+                  <Field label="Fonte">
+                    <select
+                      value={statusDraft.font}
+                      onChange={(event) =>
+                        setStatusDraft((current) => ({
+                          ...current,
+                          font: event.target.value,
+                        }))
+                      }
+                    >
+                      <option value="1">Fonte 1</option>
+                      <option value="2">Fonte 2</option>
+                      <option value="3">Fonte 3</option>
+                      <option value="4">Fonte 4</option>
+                    </select>
+                  </Field>
+                </div>
+              ) : null}
+              {!statusDraft.allContacts ? (
+                <Field label="Números permitidos">
+                  <textarea
+                    placeholder={"5511999999999\n551188887777"}
+                    value={statusDraft.statusTargetsText}
+                    onChange={(event) =>
+                      setStatusDraft((current) => ({
+                        ...current,
+                        statusTargetsText: event.target.value,
+                      }))
+                    }
+                  />
+                </Field>
+              ) : null}
+              <div className="actions-row">
+                <button className="button" type="button" onClick={handleStatusSend}>
+                  Publicar status
+                </button>
+                <button
+                  className="button-ghost"
+                  type="button"
+                  onClick={() => setStatusDraft(createStatusDraft())}
+                >
+                  Limpar
+                </button>
+              </div>
+            </section>
+
+            <section className="panel stack">
+              <div className="panel-head">
+                <div>
+                  <p className="helper-kicker">Quando usar</p>
+                  <h3 className="panel-title">Status serve para comunicar, não para substituir campanha.</h3>
+                </div>
+              </div>
+              <div className="helper-grid">
+                <div className="helper-card">
+                  <strong>Bom para avisos</strong>
+                  <p className="section-copy">Use para lembretes, convites, programação semanal ou comunicados curtos.</p>
+                </div>
+                <div className="helper-card">
+                  <strong>Bom para reforço visual</strong>
+                  <p className="section-copy">Imagem, vídeo ou áudio ajudam quando você quer chamar atenção sem abrir conversa individual.</p>
+                </div>
+                <div className="helper-card">
+                  <strong>Todos ou selecionados</strong>
+                  <p className="section-copy">Você pode publicar para todos os contatos ou restringir a uma lista de números.</p>
+                </div>
+                <div className="helper-card">
+                  <strong>Fluxo separado</strong>
+                  <p className="section-copy">O status fica nesta área para não confundir com envio rápido ou campanha agendada.</p>
+                </div>
+              </div>
             </section>
           </div>
         ) : null}
@@ -2132,23 +2540,26 @@ export function OperationsConsole() {
 function MessageBuilder({ draft, setDraft }: { draft: MessageDraft; setDraft: React.Dispatch<React.SetStateAction<MessageDraft>> }) {
   return (
     <section className="card stack">
+      <p className="field-help">
+        Escolha o formato da mensagem. Sempre que possível, use o botão de arquivo em vez de colar conteúdo técnico manualmente.
+      </p>
       <Field label="Tipo de mensagem">
         <select value={draft.type} onChange={(event) => setDraft((current) => ({ ...current, type: event.target.value as DispatchMessageType }))}>
           <option value="text">Texto</option>
           <option value="media">Mídia</option>
           <option value="audio">Áudio</option>
-          <option value="sticker">Sticker</option>
+          <option value="sticker">Figurinha</option>
           <option value="location">Localização</option>
-          <option value="contact">Contato</option>
+          <option value="contact">Cartão de contato</option>
           <option value="poll">Enquete</option>
-          <option value="list">Lista</option>
+          <option value="list">Menu em lista</option>
           <option value="buttons">Botões</option>
         </select>
       </Field>
       {draft.type === "text" ? <Field label="Texto"><textarea value={draft.text} onChange={(event) => setDraft((current) => ({ ...current, text: event.target.value }))} /></Field> : null}
       {draft.type === "media" ? (
         <>
-          <Field label="Base64 ou URL"><textarea value={draft.mediaSource} onChange={(event) => setDraft((current) => ({ ...current, mediaSource: event.target.value }))} /></Field>
+          <Field label="URL da mídia ou conteúdo colado"><textarea value={draft.mediaSource} onChange={(event) => setDraft((current) => ({ ...current, mediaSource: event.target.value }))} /></Field>
           <FileLoader label="Carregar arquivo" onLoad={async (file) => {
             const loaded = await readFileAsBase64(file);
             setDraft((current) => ({ ...current, mediaSource: loaded.base64, mimeType: loaded.mimeType, fileName: loaded.fileName }));
@@ -2156,16 +2567,16 @@ function MessageBuilder({ draft, setDraft }: { draft: MessageDraft; setDraft: Re
           <Field label="Legenda"><input value={draft.caption} onChange={(event) => setDraft((current) => ({ ...current, caption: event.target.value }))} /></Field>
         </>
       ) : null}
-      {draft.type === "audio" ? <Field label="Base64 ou URL"><textarea value={draft.audioSource} onChange={(event) => setDraft((current) => ({ ...current, audioSource: event.target.value }))} /></Field> : null}
-      {draft.type === "sticker" ? <Field label="Base64 ou URL"><textarea value={draft.stickerSource} onChange={(event) => setDraft((current) => ({ ...current, stickerSource: event.target.value }))} /></Field> : null}
+      {draft.type === "audio" ? <Field label="URL do áudio ou conteúdo colado"><textarea value={draft.audioSource} onChange={(event) => setDraft((current) => ({ ...current, audioSource: event.target.value }))} /></Field> : null}
+      {draft.type === "sticker" ? <Field label="URL da figurinha ou conteúdo colado"><textarea value={draft.stickerSource} onChange={(event) => setDraft((current) => ({ ...current, stickerSource: event.target.value }))} /></Field> : null}
       {draft.type === "location" ? <div className="field-grid"><Field label="Nome"><input value={draft.locationName} onChange={(event) => setDraft((current) => ({ ...current, locationName: event.target.value }))} /></Field><Field label="Endereço"><input value={draft.locationAddress} onChange={(event) => setDraft((current) => ({ ...current, locationAddress: event.target.value }))} /></Field><Field label="Latitude"><input value={draft.latitude} onChange={(event) => setDraft((current) => ({ ...current, latitude: event.target.value }))} /></Field><Field label="Longitude"><input value={draft.longitude} onChange={(event) => setDraft((current) => ({ ...current, longitude: event.target.value }))} /></Field></div> : null}
-      {draft.type === "contact" ? <Field label="Nome|Telefone|Email|Empresa|URL|WUID por linha"><textarea value={draft.contactCardsText} onChange={(event) => setDraft((current) => ({ ...current, contactCardsText: event.target.value }))} /></Field> : null}
+      {draft.type === "contact" ? <Field label="Um contato por linha: Nome|Telefone|Email|Empresa|URL|WUID"><textarea value={draft.contactCardsText} onChange={(event) => setDraft((current) => ({ ...current, contactCardsText: event.target.value }))} /></Field> : null}
       {draft.type === "poll" ? <><Field label="Nome da enquete"><input value={draft.pollName} onChange={(event) => setDraft((current) => ({ ...current, pollName: event.target.value }))} /></Field><Field label="Opções"><textarea value={draft.pollOptionsText} onChange={(event) => setDraft((current) => ({ ...current, pollOptionsText: event.target.value }))} /></Field></> : null}
-      {draft.type === "list" ? <><Field label="Título"><input value={draft.listTitle} onChange={(event) => setDraft((current) => ({ ...current, listTitle: event.target.value }))} /></Field><Field label="Linhas Seção|Título|Descrição|ID"><textarea value={draft.listSectionsText} onChange={(event) => setDraft((current) => ({ ...current, listSectionsText: event.target.value }))} /></Field></> : null}
-      {draft.type === "buttons" ? <p className="badge is-warn">Botões dependem de Cloud API segundo a doc v2.</p> : null}
+      {draft.type === "list" ? <><Field label="Título"><input value={draft.listTitle} onChange={(event) => setDraft((current) => ({ ...current, listTitle: event.target.value }))} /></Field><Field label="Linhas: Seção|Título|Descrição|ID"><textarea value={draft.listSectionsText} onChange={(event) => setDraft((current) => ({ ...current, listSectionsText: event.target.value }))} /></Field></> : null}
+      {draft.type === "buttons" ? <p className="badge is-warn">Botões podem depender do tipo de integração ativa da sua conta.</p> : null}
       <div className="field-grid">
-        <Field label="Mencionados"><textarea value={draft.mentionedText} onChange={(event) => setDraft((current) => ({ ...current, mentionedText: event.target.value }))} /></Field>
-        <Field label="Delay opcional do endpoint"><input value={draft.delayMs} onChange={(event) => setDraft((current) => ({ ...current, delayMs: event.target.value }))} /></Field>
+        <Field label="Mencionar números"><textarea value={draft.mentionedText} onChange={(event) => setDraft((current) => ({ ...current, mentionedText: event.target.value }))} /></Field>
+        <Field label="Espera extra antes do envio (ms)"><input value={draft.delayMs} onChange={(event) => setDraft((current) => ({ ...current, delayMs: event.target.value }))} /></Field>
       </div>
     </section>
   );

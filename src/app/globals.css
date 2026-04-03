@@ -69,31 +69,33 @@ button {
 .app-shell {
   position: relative;
   display: grid;
-  grid-template-columns: clamp(216px, 18vw, 238px) minmax(0, 1fr);
+  grid-template-columns: 1fr;
   min-height: 100vh;
-  padding: 16px;
-  gap: 16px;
+  max-width: 1560px;
+  margin: 0 auto;
+  padding: 18px;
+  gap: 18px;
 }
 
 .sidebar {
   position: sticky;
-  top: 16px;
-  display: flex;
-  flex-direction: column;
-  gap: 16px;
-  height: auto;
-  max-height: calc(100vh - 32px);
-  padding: 20px 16px;
+  top: 12px;
+  z-index: 14;
+  display: grid;
+  grid-template-columns: minmax(220px, 1.15fr) minmax(280px, 1.35fr) minmax(220px, 0.9fr) auto;
+  gap: 14px;
+  align-items: stretch;
+  padding: 18px;
   background: linear-gradient(180deg, rgba(4, 12, 18, 0.96), rgba(7, 17, 23, 0.86));
   border: 1px solid var(--line);
   border-radius: 30px;
   backdrop-filter: blur(22px);
-  overflow: visible;
 }
 
 .brand-block {
   display: grid;
   gap: 10px;
+  align-content: center;
 }
 
 .brand-mark {
@@ -145,7 +147,7 @@ button {
   align-items: flex-start;
   justify-content: space-between;
   gap: 14px;
-  margin-bottom: 14px;
+  margin-bottom: 0;
 }
 
 .workspace-header-badges {
@@ -157,34 +159,40 @@ button {
 
 .workspace-nav {
   position: sticky;
-  top: 12px;
-  z-index: 5;
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin: 0 0 16px;
-  padding: 4px 0 10px;
+  top: 124px;
+  z-index: 9;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+  margin: 0;
+  padding: 0;
 }
 
 .workspace-nav-button {
-  display: inline-flex;
-  align-items: center;
+  display: flex;
+  align-items: flex-start;
   gap: 12px;
-  min-height: 44px;
-  padding: 0 14px;
-  border: 1px solid var(--line);
-  border-radius: 16px;
-  background: rgba(6, 16, 22, 0.84);
+  min-height: 96px;
+  padding: 16px;
+  border: 1px solid rgba(151, 186, 197, 0.14);
+  border-radius: 22px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 95px),
+    rgba(6, 16, 22, 0.84);
   color: var(--text);
-  white-space: nowrap;
+  text-align: left;
+  white-space: normal;
   transition: 180ms ease;
   backdrop-filter: blur(18px);
 }
 
 .workspace-nav-button:hover,
 .workspace-nav-button.is-active {
-  background: rgba(48, 208, 167, 0.1);
-  border-color: rgba(48, 208, 167, 0.22);
+  transform: translateY(-1px);
+  background:
+    linear-gradient(180deg, rgba(48, 208, 167, 0.16), transparent 110px),
+    rgba(48, 208, 167, 0.08);
+  border-color: rgba(48, 208, 167, 0.28);
 }
 
 .nav-index {
@@ -197,17 +205,62 @@ button {
   background: rgba(255, 255, 255, 0.08);
   color: var(--muted);
   font-size: 0.82rem;
+  flex: none;
+}
+
+.nav-copy {
+  display: grid;
+  gap: 5px;
+}
+
+.nav-copy strong {
+  font-family: var(--font-display), sans-serif;
+  letter-spacing: -0.03em;
+}
+
+.nav-copy small {
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+.workspace-subnav {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: -4px;
+}
+
+.workspace-subnav-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 42px;
+  padding: 0 16px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.04);
+  color: var(--muted);
+  transition: 180ms ease;
+}
+
+.workspace-subnav-button.is-active,
+.workspace-subnav-button:hover {
+  color: var(--text);
+  border-color: rgba(255, 159, 102, 0.28);
+  background: rgba(255, 159, 102, 0.1);
 }
 
 .main {
   min-width: 0;
-  padding: 4px 4px 20px 0;
+  padding: 0;
+  display: grid;
+  gap: 18px;
 }
 
 .hero {
   display: grid;
   gap: 18px;
-  margin-bottom: 20px;
+  margin-bottom: 0;
   padding: 22px;
   border: 1px solid var(--line);
   border-radius: 30px;
@@ -308,6 +361,12 @@ button {
   gap: 14px;
 }
 
+.journey-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
 .helper-card {
   padding: 16px 18px;
   border: 1px solid rgba(151, 186, 197, 0.18);
@@ -324,6 +383,26 @@ button {
   letter-spacing: -0.02em;
 }
 
+.journey-card {
+  display: grid;
+  gap: 10px;
+  padding: 18px;
+  border: 1px solid rgba(151, 186, 197, 0.18);
+  border-radius: 20px;
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.05), transparent 120px),
+    rgba(6, 15, 22, 0.72);
+  color: var(--text);
+  text-align: left;
+  transition: 180ms ease;
+}
+
+.journey-card:hover {
+  transform: translateY(-1px);
+  border-color: rgba(48, 208, 167, 0.28);
+  background: rgba(48, 208, 167, 0.1);
+}
+
 .direct-layout,
 .conversation-layout {
   display: grid;
@@ -332,11 +411,11 @@ button {
 }
 
 .direct-layout {
-  grid-template-columns: minmax(0, 1.14fr) minmax(320px, 0.86fr);
+  grid-template-columns: minmax(0, 1.16fr) minmax(320px, 0.84fr);
 }
 
 .conversation-layout {
-  grid-template-columns: minmax(280px, 0.76fr) minmax(0, 1.24fr) minmax(320px, 0.84fr);
+  grid-template-columns: minmax(280px, 0.82fr) minmax(0, 1.18fr);
 }
 
 .direct-composer-panel {
@@ -406,6 +485,10 @@ button {
     rgba(8, 18, 26, 0.84);
 }
 
+.legacy-direct-panel {
+  display: none;
+}
+
 .instance-layout {
   display: grid;
   grid-template-columns: minmax(0, 1.16fr) minmax(360px, 0.84fr);
@@ -456,12 +539,20 @@ button {
 }
 
 .sidebar-note {
-  padding: 4px 2px 0;
+  display: grid;
+  align-content: center;
+  padding: 14px 16px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: rgba(255, 255, 255, 0.03);
 }
 
 .sidebar-logout {
-  width: 100%;
-  margin-top: auto;
+  width: auto;
+  min-width: 128px;
+  margin-top: 0;
+  justify-self: end;
+  align-self: stretch;
 }
 
 .field-help {
@@ -849,15 +940,15 @@ button {
   }
 
   .conversation-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .workspace-nav {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
 
 @media (max-width: 1280px) {
-  .app-shell {
-    grid-template-columns: 210px minmax(0, 1fr);
-  }
-
   .hero-grid,
   .stats-grid,
   .three-grid,
@@ -870,6 +961,10 @@ button {
   .direct-layout,
   .conversation-layout {
     grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .instance-form-shell {
@@ -885,18 +980,18 @@ button {
 
   .sidebar {
     position: static;
-    height: auto;
-    top: auto;
+    grid-template-columns: 1fr;
   }
 
   .main {
-    padding: 0 2px 20px;
+    padding: 0;
   }
 
   .two-grid,
   .three-grid,
   .overview-grid,
   .helper-grid,
+  .journey-grid,
   .field-grid,
   .instance-layout,
   .direct-layout,
@@ -907,7 +1002,12 @@ button {
 
   .workspace-nav {
     position: static;
-    top: auto;
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar-logout {
+    justify-self: start;
+    align-self: auto;
   }
 }
 
