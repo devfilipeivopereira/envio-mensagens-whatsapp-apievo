@@ -1,111 +1,44 @@
-# Painel Evolution API
+﻿# Evolution Sender Pro
 
-Painel full-stack em Next.js para operar instâncias da Evolution API com login via Supabase, filas com pausa mínima de 10 segundos, listas personalizadas, campanhas agendadas e suporte multi-instância com schema dedicado por instância.
+Painel React + Vite para operacao de campanhas WhatsApp com Evolution API v2 e Supabase.
 
-## Visão geral
+## Documentacao
 
-O projeto foi desenhado como um cockpit operacional para WhatsApp em cima da Evolution API. A interface combina modo guiado para tarefas do dia a dia com um explorer técnico para cobrir endpoints menos frequentes.
+A documentacao tecnica completa esta em:
 
-## Recursos principais
+- `docs/GUIA_TECNICO_COMPLETO.md`
 
-- Login com Supabase Auth
-- Cadastro e gestão de múltiplas instâncias Evolution
-- Contatos sincronizados, contatos locais e grupos
-- Disparo unitário e campanhas em massa
-- Listas personalizadas para envio agendado
-- Importação de números via CSV
-- Fila persistida em banco com pausa mínima de 10 segundos
-- Worker de processamento para VPS com cron Linux
-- Processamento da fila por scheduler externo, VPS ou Vercel Pro
-- Explorer para chamadas manuais da Evolution API
+Esse guia cobre:
 
-## Stack
+- arquitetura da aplicacao
+- modelagem Supabase (tabelas, policies e storage)
+- fluxos de instancia, envio, grupos oficiais e grupos custom
+- fila de envio em massa (10s) e envio para grupos (20s)
+- upload de midia para Supabase e uso por URL
+- checklist de deploy no Vercel
+- testes, validacao e troubleshooting
 
-- Next.js 15
-- React 19
-- Supabase Auth
-- Postgres via `pg`
-- Vercel
+## Setup rapido local
 
-## Organização para Vercel
+1. Copie `.env.example` para `.env`.
+2. Preencha somente:
 
-O projeto foi ajustado para o modelo serverless com estes pontos:
-
-- `next.config.ts` usando `serverExternalPackages: ["pg"]`
-- handlers em runtime Node.js
-- `preferredRegion = "gru1"` nas rotas principais
-- `maxDuration` explícito para rotas sensíveis
-- pool do Postgres reduzido em Vercel para evitar excesso de conexões
-- suporte a `SUPABASE_DB_POOLER_URL` como fallback recomendado
-- healthcheck em `/api/health`
-- compatibilidade com plano Hobby sem depender de cron por minuto no `vercel.json`
-
-## Variáveis de ambiente
-
-Configure no Vercel em `Project Settings > Environment Variables`.
-
-Obrigatórias:
-
-- `NEXT_PUBLIC_SUPABASE_URL`
-- `NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY`
-- `SUPABASE_SERVICE_ROLE_KEY`
-- `SUPABASE_DB_URL`
-- `CRON_SECRET`
-- `EVOLUTION_BASE_URL`
-- `EVOLUTION_API_KEY`
-- `EVOLUTION_INSTANCE_NAME`
-
-Recomendada para produção serverless:
-
-- `SUPABASE_DB_POOLER_URL`
-
-## Deploy
-
-1. Importe o repositório no Vercel.
-2. Cadastre todas as variáveis de ambiente.
-3. Defina um `CRON_SECRET` forte.
-4. Faça o primeiro deploy.
-5. Abra `/api/health` para validar autenticação, cron e banco.
-6. Se estiver no plano Hobby, use o worker na VPS ou um scheduler externo.
-
-## Vercel Hobby
-
-Em contas Hobby, o Vercel não aceita cron por minuto no `vercel.json`. Por isso o projeto foi adaptado para:
-
-- fazer deploy sem `crons` configurados no Vercel
-- aceitar processamento externo da fila
-- aceitar um worker próprio rodando na sua VPS
-- manter a mesma pausa mínima de 10 segundos entre mensagens
-
-Você pode processar a fila de duas formas:
-
-1. Worker local na VPS:
-
-```bash
-npm run worker:dispatch
+```env
+VITE_SUPABASE_URL=...
+VITE_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
-2. Chamada HTTP para a rota:
-
-- `Authorization: Bearer SEU_CRON_SECRET`
-- `x-cron-secret: SEU_CRON_SECRET`
-- `?secret=SEU_CRON_SECRET`
-
-Exemplo:
-
-```text
-https://seu-dominio.com/api/cron/process-dispatches?secret=SEU_CRON_SECRET
-```
-
-## Comandos locais
+3. Instale e rode:
 
 ```bash
+npm install
 npm run dev
-npm run build
-npm run typecheck
 ```
 
-## Documentação adicional
+## Deploy no Vercel
 
-- [Guia detalhado de deploy no Vercel](./docs/vercel-deploy.md)
-- [Guia de scheduler externo para plano Hobby](./docs/hobby-cron-setup.md)
+1. Importe o repositorio no Vercel.
+2. Configure apenas as variaveis `VITE_SUPABASE_URL` e `VITE_SUPABASE_PUBLISHABLE_KEY`.
+3. Deploy.
+
+`vercel.json` ja esta pronto com build de Vite e rewrite SPA para `index.html`.

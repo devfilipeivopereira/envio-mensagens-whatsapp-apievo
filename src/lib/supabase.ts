@@ -1,39 +1,26 @@
-import "server-only";
+﻿import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 
-import { createClient } from "@supabase/supabase-js";
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL;
+const supabasePublishableKey = import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY;
 
-import type { AuthenticatedUser } from "@/lib/types";
-import { requiredEnv } from "@/lib/utils";
+let supabaseClient: SupabaseClient | null = null;
 
-const supabaseUrl = requiredEnv("NEXT_PUBLIC_SUPABASE_URL");
-const supabasePublishableKey = requiredEnv("NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY");
-const serviceRoleKey = requiredEnv("SUPABASE_SERVICE_ROLE_KEY");
-
-export function createBrowserSupabaseClient() {
-  return createClient(supabaseUrl, supabasePublishableKey);
-}
-
-export function createSupabaseAdminClient() {
-  return createClient(supabaseUrl, serviceRoleKey, {
+if (supabaseUrl && supabasePublishableKey) {
+  supabaseClient = createClient(supabaseUrl, supabasePublishableKey, {
     auth: {
-      autoRefreshToken: false,
       persistSession: false,
+      autoRefreshToken: false,
+      detectSessionInUrl: false,
     },
   });
+} else {
+  console.warn("Supabase not configured. Define VITE_SUPABASE_URL and VITE_SUPABASE_PUBLISHABLE_KEY in .env.");
 }
 
-export async function verifySupabaseAccessToken(accessToken: string) {
-  const supabase = createSupabaseAdminClient();
-  const result = await supabase.auth.getUser(accessToken);
+export function getSupabaseClient() {
+  return supabaseClient;
+}
 
-  if (result.error || !result.data.user?.email) {
-    throw new Error("Sessao invalida. Faça login novamente.");
-  }
-
-  const user: AuthenticatedUser = {
-    id: result.data.user.id,
-    email: result.data.user.email,
-  };
-
-  return user;
+export function isSupabaseConfigured() {
+  return Boolean(supabaseClient);
 }
